@@ -1,5 +1,5 @@
-/// cli/cmd/tickets.go — Ticket management commands
-/// buy (on-chain via cast), sell, list tickets
+// / cli/cmd/tickets.go — Ticket management commands
+// / buy (on-chain via cast), sell, list tickets
 package cmd
 
 import (
@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"buddyevents/internal/api"
+	x402client "buddyevents/internal/x402"
 
 	"github.com/spf13/cobra"
 )
@@ -62,7 +63,7 @@ var ticketsBuyCmd = &cobra.Command{
 		convexEventID, _ := cmd.Flags().GetString("event-id")
 
 		if onChainEventID == "" && convexEventID == "" {
-			return fmt.Errorf("provide --on-chain-id (for direct on-chain) or --event-id (for API purchase)")
+			return fmt.Errorf("provide --on-chain-id (direct contract call) or --event-id (x402 API purchase)")
 		}
 
 		if cfg.PrivateKey == "" {
@@ -107,14 +108,26 @@ var ticketsBuyCmd = &cobra.Command{
 			fmt.Println("Ticket purchased successfully on Monad!")
 		}
 
-		// If convex event ID provided, also record in Convex
+		// If event ID provided, purchase through x402-protected API.
 		if convexEventID != "" {
-			client := api.NewClient(cfg.APIURL)
-			ticketID, err := client.BuyTicket(convexEventID, cfg.WalletAddress, "")
+			if cfg.WalletAddress == "" {
+				return fmt.Errorf("no wallet address configured. Run: buddyevents wallet setup")
+			}
+
+			fmt.Println("Buying ticket through x402 payment flow...")
+			result, err := x402client.BuyTicket(
+				cfg.APIURL,
+				convexEventID,
+				cfg.WalletAddress,
+				"",
+				cfg.PrivateKey,
+			)
 			if err != nil {
-				fmt.Printf("Warning: failed to record in backend: %v\n", err)
+				return fmt.Errorf("x402 purchase failed: %w", err)
 			} else {
-				fmt.Printf("Ticket recorded: %s\n", ticketID)
+				fmt.Printf("Ticket purchased!\n")
+				fmt.Printf("Ticket ID: %s\n", result.TicketID)
+				fmt.Printf("Settlement Tx: %s\n", result.TxHash)
 			}
 		}
 

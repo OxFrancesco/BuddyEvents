@@ -1,14 +1,20 @@
 /// app/api/events/[id]/buy/route.ts — x402-protected ticket purchase endpoint
-/// Agents and clients pay USDC via x402 to buy event tickets
+/// Dynamic per-event pricing + real settlement tx recording
 
 import { NextRequest, NextResponse } from "next/server";
-import { withX402, type RouteConfig } from "@x402/next";
-import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
+import { NextAdapter } from "@x402/next";
+import {
+  HTTPFacilitatorClient,
+  type HTTPRequestContext,
+  type RouteConfig,
+  x402HTTPResourceServer,
+  x402ResourceServer,
+} from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import type { Network } from "@x402/core/types";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
-import type { Id } from "../../../../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../../../../convex/_generated/dataModel";
 import {
   FACILITATOR_URL,
   MONAD_TESTNET_NETWORK,
@@ -24,48 +30,121 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
-// Monad x402 facilitator
+function extractEventIdFromPath(path: string): string | null {
+  const match = path.match(/\/api\/events\/([^/]+)\/buy$/);
+  return match?.[1] ?? null;
+}
+
+async function loadEventFromPath(path: string): Promise<Doc<"events"> | null> {
+  const eventId = extractEventIdFromPath(path);
+  if (!eventId) return null;
+  const convex = getConvexClient();
+  return await convex.query(api.events.get, { id: eventId as Id<"events"> });
+}
+
+async function loadTeamWallet(event: Doc<"events">): Promise<string> {
+  const convex = getConvexClient();
+  const team = await convex.query(api.teams.get, { id: event.teamId });
+  return team?.walletAddress ?? PAY_TO_ADDRESS;
+}
+
 const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL });
-const server = new x402ResourceServer(facilitatorClient);
+const resourceServer = new x402ResourceServer(facilitatorClient);
 
-// Register Monad network with custom USDC money parser
 const monadScheme = new ExactEvmScheme();
-monadScheme.registerMoneyParser(
-  async (amount: number, network: string) => {
-    if (network === MONAD_TESTNET_NETWORK) {
-      const tokenAmount = Math.floor(amount * 1_000_000).toString();
-      return {
-        amount: tokenAmount,
-        asset: MONAD_USDC_ADDRESS,
-        extra: { name: "USDC", version: "2" },
-      };
-    }
-    return null;
-  },
-);
-server.register(MONAD_TESTNET_NETWORK, monadScheme);
+monadScheme.registerMoneyParser(async (amount: number, network: string) => {
+  if (network === MONAD_TESTNET_NETWORK) {
+    const tokenAmount = Math.floor(amount * 1_000_000).toString();
+    return {
+      amount: tokenAmount,
+      asset: MONAD_USDC_ADDRESS,
+      extra: { name: "USDC", version: "2" },
+    };
+  }
+  return null;
+});
+resourceServer.register(MONAD_TESTNET_NETWORK, monadScheme);
 
-// Dynamic route config based on event price
-function getRouteConfig(price: number): RouteConfig {
-  return {
-    accepts: {
-      scheme: "exact",
-      network: MONAD_TESTNET_NETWORK as Network,
-      payTo: PAY_TO_ADDRESS,
-      price: `$${price}`,
+const routeConfig: RouteConfig = {
+  accepts: {
+    scheme: "exact",
+    network: MONAD_TESTNET_NETWORK as Network,
+    payTo: async (context: HTTPRequestContext) => {
+      const event = await loadEventFromPath(context.path);
+      if (!event) return PAY_TO_ADDRESS;
+      return await loadTeamWallet(event);
     },
-    resource: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/api/events/buy`,
+    price: async (context: HTTPRequestContext) => {
+      const event = await loadEventFromPath(context.path);
+      const price = event?.price ?? 0.001;
+      const normalized = Number.isFinite(price) && price > 0 ? price : 0.001;
+      return `$${normalized.toFixed(6)}`;
+    },
+  },
+  resource: "https://buddyevents.local/api/events/[id]/buy",
+  description: "Purchase event ticket",
+  mimeType: "application/json",
+};
+
+const httpServer = new x402HTTPResourceServer(resourceServer, {
+  "GET /api/events/*/buy": routeConfig,
+});
+
+// Grant free events without payment; block invalid/sold-out events up-front.
+httpServer.onProtectedRequest(async (context) => {
+  const event = await loadEventFromPath(context.path);
+  if (!event) return { abort: true as const, reason: "Event not found" };
+  if (event.status !== "active")
+    return { abort: true as const, reason: "Event not active" };
+  if (event.ticketsSold >= event.maxTickets)
+    return { abort: true as const, reason: "Event sold out" };
+  if (event.price <= 0) return { grantAccess: true as const };
+  return;
+});
+
+type BuyTicketResponse = {
+  success: boolean;
+  ticketId: string | null;
+  eventId: string;
+  buyer: string;
+  message: string;
+  txHash: string | null;
+  timestamp: string;
+};
+
+function buildContext(request: NextRequest): HTTPRequestContext {
+  const adapter = new NextAdapter(request);
+  return {
+    adapter,
+    path: adapter.getPath(),
+    method: adapter.getMethod(),
+    paymentHeader:
+      adapter.getHeader("PAYMENT-SIGNATURE") ??
+      adapter.getHeader("payment-signature") ??
+      adapter.getHeader("X-PAYMENT") ??
+      adapter.getHeader("x-payment"),
   };
 }
 
-// Handler: after x402 payment settles, record the ticket in Convex
-async function handler(request: NextRequest) {
-  const url = new URL(request.url);
-  const segments = url.pathname.split("/");
-  const eventId = segments[segments.indexOf("events") + 1];
+function jsonWithHeaders(
+  body: BuyTicketResponse,
+  status: number,
+  headers?: Record<string, string>,
+) {
+  const response = NextResponse.json(body, { status });
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      response.headers.set(key, value);
+    }
+  }
+  return response;
+}
 
-  // Get buyer info from query params or headers
-  const buyerAddress =
+export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const eventId = extractEventIdFromPath(url.pathname) ?? "";
+
+  const requestedBuyer =
     url.searchParams.get("buyer") ??
     request.headers.get("x-buyer-address") ??
     "unknown";
@@ -76,42 +155,129 @@ async function handler(request: NextRequest) {
 
   try {
     const convex = getConvexClient();
-    const eventDocId = eventId as Id<"events">;
-    const event = await convex.query(api.events.get, { id: eventDocId });
+    const event = await convex.query(api.events.get, {
+      id: eventId as Id<"events">,
+    });
     if (!event) {
-      throw new Error("Event not found");
+      return jsonWithHeaders(
+        {
+          success: false,
+          ticketId: null,
+          eventId,
+          buyer: requestedBuyer,
+          message: "Event not found",
+          txHash: null,
+          timestamp: new Date().toISOString(),
+        },
+        404,
+      );
     }
 
-    // Record purchase in Convex
+    const processResult = await httpServer.processHTTPRequest(buildContext(request));
+
+    if (processResult.type === "payment-error") {
+      const message =
+        typeof processResult.response.body === "object" &&
+        processResult.response.body !== null
+          ? JSON.stringify(processResult.response.body)
+          : "Payment required";
+
+      return jsonWithHeaders(
+        {
+          success: false,
+          ticketId: null,
+          eventId,
+          buyer: requestedBuyer,
+          message,
+          txHash: null,
+          timestamp: new Date().toISOString(),
+        },
+        processResult.response.status,
+        processResult.response.headers,
+      );
+    }
+
+    if (processResult.type === "no-payment-required") {
+      const ticketId = await convex.mutation(api.tickets.recordPurchase, {
+        eventId: eventId as Id<"events">,
+        buyerAddress: requestedBuyer,
+        buyerAgentId: buyerAgentId ?? undefined,
+        purchasePrice: event.price,
+        txHash: `free-${Date.now()}`,
+      });
+
+      return jsonWithHeaders(
+        {
+          success: true,
+          ticketId,
+          eventId,
+          buyer: requestedBuyer,
+          message: "Free ticket granted",
+          txHash: null,
+          timestamp: new Date().toISOString(),
+        },
+        200,
+      );
+    }
+
+    const settlement = await httpServer.processSettlement(
+      processResult.paymentPayload,
+      processResult.paymentRequirements,
+      processResult.declaredExtensions,
+    );
+
+    if (!settlement.success) {
+      return jsonWithHeaders(
+        {
+          success: false,
+          ticketId: null,
+          eventId,
+          buyer: requestedBuyer,
+          message:
+            settlement.errorMessage ??
+            settlement.errorReason ??
+            "Settlement failed",
+          txHash: settlement.transaction ?? null,
+          timestamp: new Date().toISOString(),
+        },
+        402,
+      );
+    }
+
+    const settledBuyer = settlement.payer ?? requestedBuyer;
     const ticketId = await convex.mutation(api.tickets.recordPurchase, {
-      eventId: eventDocId,
-      buyerAddress,
-      buyerAgentId: buyerAgentId || undefined,
+      eventId: eventId as Id<"events">,
+      buyerAddress: settledBuyer,
+      buyerAgentId: buyerAgentId ?? undefined,
       purchasePrice: event.price,
-      txHash: `x402-${Date.now()}`, // x402 facilitator handles the tx
+      txHash: settlement.transaction,
     });
 
-    return NextResponse.json({
-      success: true,
-      ticketId,
-      eventId,
-      buyer: buyerAddress,
-      message: "Ticket purchased successfully via x402",
-      timestamp: new Date().toISOString(),
-    });
+    return jsonWithHeaders(
+      {
+        success: true,
+        ticketId,
+        eventId,
+        buyer: settledBuyer,
+        message: "Ticket purchased successfully via x402",
+        txHash: settlement.transaction,
+        timestamp: new Date().toISOString(),
+      },
+      200,
+      settlement.headers,
+    );
   } catch (error) {
-    return NextResponse.json({
-      success: false,
-      ticketId: "" as Id<"tickets">,
-      eventId,
-      buyer: buyerAddress,
-      message: error instanceof Error ? error.message : "Purchase failed",
-      timestamp: new Date().toISOString(),
-    });
+    return jsonWithHeaders(
+      {
+        success: false,
+        ticketId: null,
+        eventId,
+        buyer: requestedBuyer,
+        message: error instanceof Error ? error.message : "Purchase failed",
+        txHash: null,
+        timestamp: new Date().toISOString(),
+      },
+      500,
+    );
   }
 }
-
-// Default price for the x402 wrapper — individual events override via query param
-const DEFAULT_PRICE = 0.001; // $0.001 USDC minimum
-const routeConfig = getRouteConfig(DEFAULT_PRICE);
-export const GET = withX402(handler, routeConfig, server);
