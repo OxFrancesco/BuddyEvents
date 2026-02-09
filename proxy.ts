@@ -1,6 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isProtectedRoute = createRouteMatcher(["/server"]);
+// proxy.ts — Clerk middleware for protected human-facing routes
+const isProtectedRoute = createRouteMatcher(["/create(.*)", "/tickets(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
   if (isProtectedRoute(req)) await auth.protect();

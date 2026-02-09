@@ -89,9 +89,90 @@ forge script script/Deploy.s.sol:DeployScript \
   --broadcast
 ```
 
+Mainnet variant (set USDC_ADDRESS explicitly):
+
+```bash
+cd contracts
+export USDC_ADDRESS=0x... # Monad mainnet USDC
+forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url https://rpc.monad.xyz \
+  --private-key $PRIVATE_KEY \
+  --broadcast
+```
+
+If using the BuddyEvents CLI wallet instead of a standalone key:
+
+```bash
+cd cli
+./buddyevents wallet setup
+./buddyevents wallet fund
+./buddyevents wallet balance
+export PRIVATE_KEY=$(jq -r '.private_key' ~/.buddyevents/config.json)
+cd ../contracts
+forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url https://testnet-rpc.monad.xyz \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast
+```
+
 Copy deployed address into:
 - `.env.local` as `NEXT_PUBLIC_BUDDY_EVENTS_CONTRACT`
 - `~/.buddyevents/config.json` as `contract_address`
+
+### 3.3 Verify deployed contract (API-first)
+
+Use Monad's agent verification API first (verifies across explorers in one call).
+
+```bash
+cd contracts
+export CONTRACT_ADDRESS=0x... # deployed BuddyEvents address
+export CONTRACT_NAME=src/BuddyEvents.sol:BuddyEvents
+export CHAIN_ID=10143         # use 143 for mainnet
+
+# 1) Build standard-json input and metadata artifacts
+forge verify-contract "$CONTRACT_ADDRESS" "$CONTRACT_NAME" \
+  --chain "$CHAIN_ID" \
+  --show-standard-json-input > /tmp/standard-input.json
+
+cat out/BuddyEvents.sol/BuddyEvents.json | jq '.metadata' > /tmp/metadata.json
+COMPILER_VERSION=$(jq -r '.metadata | fromjson | .compiler.version' out/BuddyEvents.sol/BuddyEvents.json)
+
+# 2) Optional constructor args (without 0x prefix)
+# ARGS=$(cast abi-encode "constructor(address)" "$USDC_ADDRESS")
+# CONSTRUCTOR_ARGS=${ARGS#0x}
+
+# 3) Build payload
+STANDARD_INPUT=$(cat /tmp/standard-input.json)
+FOUNDRY_METADATA=$(cat /tmp/metadata.json)
+
+cat > /tmp/verify.json <<EOF
+{
+  "chainId": $CHAIN_ID,
+  "contractAddress": "$CONTRACT_ADDRESS",
+  "contractName": "$CONTRACT_NAME",
+  "compilerVersion": "v${COMPILER_VERSION}",
+  "standardJsonInput": $STANDARD_INPUT,
+  "foundryMetadata": $FOUNDRY_METADATA
+}
+EOF
+
+# 4) Verify
+curl -X POST https://agents.devnads.com/v1/verify \
+  -H "Content-Type: application/json" \
+  -d @/tmp/verify.json
+```
+
+Expected:
+- HTTP success response from verification API
+- Contract appears verified on Monad explorers after indexing delay
+
+Fallback (manual Sourcify verifier):
+
+```bash
+forge verify-contract "$CONTRACT_ADDRESS" "$CONTRACT_NAME" --chain "$CHAIN_ID" \
+  --verifier sourcify \
+  --verifier-url "https://sourcify-api-monad.blockvision.org/"
+```
 
 ---
 

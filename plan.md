@@ -56,10 +56,37 @@
 - [x] Web UI flow documented
 - [x] x402 HTTP flow documented
 
+### Phase 8: Clerk + Convex Auth Wiring
+- [x] Enable Clerk JWT provider in `convex/auth.config.ts` (`applicationID: "convex"`)
+- [x] Add `CLERK_JWT_ISSUER_DOMAIN` to `.env.example`
+- [x] Protect human-facing routes in `proxy.ts` (`/create`, `/tickets`)
+- [x] Add `NEXT_PUBLIC_CONVEX_URL` runtime guard in `components/ConvexClientProvider.tsx`
+- [x] Update `README.md` setup instructions with required Clerk + Convex env vars
+- [ ] Set `CLERK_JWT_ISSUER_DOMAIN` in Convex deployment env + rerun `bunx convex dev --once`
+
+### Phase 9: Wallet Ops + Skill
+- [x] Build CLI and run wallet setup/fund/balance on Monad testnet
+- [x] Add `wallet send` command to CLI (`mon` and `usdc`)
+- [x] Smoke test `wallet send --token mon` on testnet
+- [x] Create project skill `.cursor/skills/monad-wallet-ops/SKILL.md`
+
+### Phase 10: Monad Deploy + Contract Hardening
+- [x] Document wallet-based Foundry deploy path in `README.md` + `WORKFLOW.md`
+- [x] Parameterize `contracts/script/Deploy.s.sol` (`USDC_ADDRESS` env with testnet fallback)
+- [x] Harden contract invariants in `contracts/src/BuddyEvents.sol`
+- [x] Add invariant and failure-path tests in `contracts/test/BuddyEvents.t.sol`
+- [x] Add deterministic verification runbook (API-first + fallback) to docs
+
 ## File Structure
 
 ```
 BuddyEvents/
+├── .cursor/
+│   ├── rules/
+│   │   └── convex_rules.mdc            # Convex coding rules
+│   └── skills/
+│       └── monad-wallet-ops/
+│           └── SKILL.md                # Wallet setup/fund/balance/send workflow
 ├── app/
 │   ├── api/
 │   │   ├── events/[id]/buy/route.ts   # x402-protected ticket purchase
@@ -79,7 +106,7 @@ BuddyEvents/
 │   │   ├── root.go                    # CLI root + config
 │   │   ├── events.go                  # events list|create|cancel
 │   │   ├── tickets.go                 # tickets buy|sell|list
-│   │   ├── wallet.go                  # wallet setup|balance|fund
+│   │   ├── wallet.go                  # wallet setup|balance|fund|send
 │   │   └── agent.go                   # agent register|info
 │   ├── internal/
 │   │   ├── api/client.go              # HTTP client for REST API

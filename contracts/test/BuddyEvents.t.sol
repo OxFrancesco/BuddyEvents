@@ -36,6 +36,11 @@ contract BuddyEventsTest is Test {
         usdc.mint(buyer2, 1000 * 10 ** 6);
     }
 
+    function test_RevertConstructor_ZeroUSDC() public {
+        vm.expectRevert("Zero USDC");
+        new BuddyEvents(address(0));
+    }
+
     function test_CreateEvent() public {
         vm.prank(organizer);
         uint256 eventId = buddyEvents.createEvent("ETH Denver", 10 * 10 ** 6, 100);
@@ -103,6 +108,37 @@ contract BuddyEventsTest is Test {
         assertEq(price, 20 * 10 ** 6);
     }
 
+    function test_RevertEditEvent_PriceLockedAfterSales() public {
+        vm.prank(organizer);
+        uint256 eventId = buddyEvents.createEvent("ETH Denver", 10 * 10 ** 6, 100);
+
+        vm.startPrank(buyer);
+        usdc.approve(address(buddyEvents), 10 * 10 ** 6);
+        buddyEvents.buyTicket(eventId);
+        vm.stopPrank();
+
+        vm.prank(organizer);
+        vm.expectRevert("Price locked after sales");
+        buddyEvents.editEvent(eventId, "ETH Denver Price Change", 20 * 10 ** 6);
+    }
+
+    function test_EditEvent_NameAfterSales_SamePrice() public {
+        vm.prank(organizer);
+        uint256 eventId = buddyEvents.createEvent("ETH Denver", 10 * 10 ** 6, 100);
+
+        vm.startPrank(buyer);
+        usdc.approve(address(buddyEvents), 10 * 10 ** 6);
+        buddyEvents.buyTicket(eventId);
+        vm.stopPrank();
+
+        vm.prank(organizer);
+        buddyEvents.editEvent(eventId, "ETH Denver 2026", 10 * 10 ** 6);
+
+        (string memory name, uint256 price,,,,) = buddyEvents.getEvent(eventId);
+        assertEq(name, "ETH Denver 2026");
+        assertEq(price, 10 * 10 ** 6);
+    }
+
     function test_CancelEvent() public {
         vm.prank(organizer);
         uint256 eventId = buddyEvents.createEvent("ETH Denver", 10 * 10 ** 6, 100);
@@ -127,6 +163,22 @@ contract BuddyEventsTest is Test {
 
         (, , bool active) = buddyEvents.getListing(tokenId);
         assertFalse(active);
+    }
+
+    function test_AutoDelistOnTransfer() public {
+        vm.prank(organizer);
+        uint256 eventId = buddyEvents.createEvent("ETH Denver", 10 * 10 ** 6, 100);
+
+        vm.startPrank(buyer);
+        usdc.approve(address(buddyEvents), 10 * 10 ** 6);
+        uint256 tokenId = buddyEvents.buyTicket(eventId);
+        buddyEvents.listTicket(tokenId, 15 * 10 ** 6);
+        buddyEvents.transferFrom(buyer, buyer2, tokenId);
+        vm.stopPrank();
+
+        (, , bool active) = buddyEvents.getListing(tokenId);
+        assertFalse(active);
+        assertEq(buddyEvents.ownerOf(tokenId), buyer2);
     }
 
     function test_RevertBuyTicket_SoldOut() public {
@@ -164,5 +216,14 @@ contract BuddyEventsTest is Test {
         vm.prank(buyer);
         vm.expectRevert("Not organizer");
         buddyEvents.editEvent(eventId, "Hacked", 0);
+    }
+
+    function test_RevertCancelEvent_NotAuthorized() public {
+        vm.prank(organizer);
+        uint256 eventId = buddyEvents.createEvent("ETH Denver", 10 * 10 ** 6, 100);
+
+        vm.prank(buyer);
+        vm.expectRevert("Not authorized");
+        buddyEvents.cancelEvent(eventId);
     }
 }

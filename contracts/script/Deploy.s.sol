@@ -11,8 +11,13 @@ contract DeployScript is Script {
     address constant MONAD_USDC_TESTNET = 0x534b2f3A21130d7a60830c2Df862319e593943A3;
 
     function run() external {
+        // For mainnet or custom deployments set USDC_ADDRESS in env.
+        // If omitted, default to Monad testnet USDC for hackathon flow.
+        address usdcAddress = vm.envOr("USDC_ADDRESS", MONAD_USDC_TESTNET);
+
         vm.startBroadcast();
-        BuddyEvents buddyEvents = new BuddyEvents(MONAD_USDC_TESTNET);
+        BuddyEvents buddyEvents = new BuddyEvents(usdcAddress);
+        console.log("USDC address:", usdcAddress);
         console.log("BuddyEvents deployed at:", address(buddyEvents));
         vm.stopBroadcast();
     }

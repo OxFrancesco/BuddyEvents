@@ -46,6 +46,7 @@ contract BuddyEvents is ERC721, Ownable, ReentrancyGuard {
     event TicketSold(uint256 indexed tokenId, uint256 price, address seller, address buyer);
 
     constructor(address _usdc) ERC721("BuddyEvents Ticket", "BTIX") Ownable(msg.sender) {
+        require(_usdc != address(0), "Zero USDC");
         usdc = IERC20(_usdc);
     }
 
@@ -75,6 +76,7 @@ contract BuddyEvents is ERC721, Ownable, ReentrancyGuard {
         Event storage evt = events[eventId];
         require(evt.organizer == msg.sender, "Not organizer");
         require(evt.active, "Event cancelled");
+        if (evt.ticketsSold > 0) require(priceInUSDC == evt.priceInUSDC, "Price locked after sales");
 
         if (bytes(name).length > 0) evt.name = name;
         evt.priceInUSDC = priceInUSDC;
@@ -143,10 +145,17 @@ contract BuddyEvents is ERC721, Ownable, ReentrancyGuard {
             require(usdc.transferFrom(msg.sender, seller, price), "USDC transfer failed");
         }
 
-        _transfer(seller, msg.sender, tokenId);
+        // Deactivate listing before transfer to keep market state coherent.
         listing.active = false;
+        _transfer(seller, msg.sender, tokenId);
 
         emit TicketSold(tokenId, price, seller, msg.sender);
+    }
+
+    /// @dev Auto-delist tickets when ownership changes outside explicit delist flow.
+    function _update(address to, uint256 tokenId, address auth) internal override returns (address from) {
+        from = super._update(to, tokenId, auth);
+        if (from != address(0) && to != from) _deactivateListing(tokenId);
     }
 
     // ========== View Functions ==========
@@ -170,5 +179,13 @@ contract BuddyEvents is ERC721, Ownable, ReentrancyGuard {
     function getListing(uint256 tokenId) external view returns (uint256 price, address seller, bool active) {
         Listing storage listing = listings[tokenId];
         return (listing.price, listing.seller, listing.active);
+    }
+
+    function _deactivateListing(uint256 tokenId) internal {
+        Listing storage listing = listings[tokenId];
+        if (listing.active) {
+            listing.active = false;
+            emit TicketDelisted(tokenId);
+        }
     }
 }
