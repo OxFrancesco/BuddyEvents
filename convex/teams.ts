@@ -3,6 +3,7 @@
 
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { requireAdminOrService } from "./lib/auth";
 
 export const list = query({
   args: {},
@@ -45,9 +46,12 @@ export const create = mutation({
     description: v.string(),
     walletAddress: v.string(),
     members: v.array(v.string()),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("teams"),
   handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+
     return await ctx.db.insert("teams", {
       name: args.name,
       description: args.description,
@@ -64,9 +68,12 @@ export const update = mutation({
     description: v.optional(v.string()),
     walletAddress: v.optional(v.string()),
     members: v.optional(v.array(v.string())),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+
     const team = await ctx.db.get(args.id);
     if (!team) throw new Error("Team not found");
 

@@ -6,9 +6,11 @@ import {
   mutation,
   internalMutation,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v, type Infer } from "convex/values";
+import { requireSignedInUserOrService } from "./lib/auth";
 
 const ticketStatusValidator = v.union(
   v.literal("active"),
@@ -109,12 +111,35 @@ function isSameAddress(a: string | undefined, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
+async function userOwnsAddress(
+  ctx: MutationCtx | QueryCtx,
+  user: Doc<"users">,
+  address: string,
+): Promise<boolean> {
+  if (isSameAddress(user.walletAddress, address)) return true;
+
+  const wallets = await ctx.db
+    .query("wallets")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .collect();
+
+  return wallets.some((wallet) => isSameAddress(wallet.walletAddress, address));
+}
+
 // ========== Queries ==========
 
 export const listByEvent = query({
-  args: { eventId: v.id("events") },
+  args: {
+    eventId: v.id("events"),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.array(ticketListItemValidator),
   handler: async (ctx, args) => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (actor && actor.role !== "admin") {
+      throw new Error("Admin access required");
+    }
+
     return await ctx.db
       .query("tickets")
       .withIndex("by_event", (q) => q.eq("eventId", args.eventId))
@@ -123,9 +148,21 @@ export const listByEvent = query({
 });
 
 export const listByBuyer = query({
-  args: { buyerAddress: v.string() },
+  args: {
+    buyerAddress: v.string(),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.array(ticketListItemValidator),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Array<Doc<"tickets">>> => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (
+      actor &&
+      actor.role !== "admin" &&
+      !(await userOwnsAddress(ctx, actor, args.buyerAddress))
+    ) {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db
       .query("tickets")
       .withIndex("by_buyer", (q) => q.eq("buyerAddress", args.buyerAddress))
@@ -134,10 +171,21 @@ export const listByBuyer = query({
 });
 
 export const get = query({
-  args: { id: v.id("tickets") },
+  args: {
+    id: v.id("tickets"),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.union(ticketListItemValidator, v.null()),
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    const ticket = await ctx.db.get(args.id);
+    if (!ticket) return null;
+
+    if (!actor || actor.role === "admin") return ticket;
+    if (await userOwnsAddress(ctx, actor, ticket.buyerAddress)) {
+      return ticket;
+    }
+    throw new Error("Forbidden");
   },
 });
 
@@ -151,6 +199,7 @@ export const recordPurchase = mutation({
     buyerAgentId: v.optional(v.string()),
     purchasePrice: v.number(),
     txHash: v.string(),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("tickets"),
   handler: async (ctx, args) => {
@@ -167,6 +216,7 @@ export const recordPurchaseAndIssueQr = mutation({
     buyerAgentId: v.optional(v.string()),
     purchasePrice: v.number(),
     txHash: v.string(),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.object({
     ticketId: v.id("tickets"),
@@ -187,8 +237,21 @@ async function recordPurchaseWithQrToken(
     buyerAgentId?: string;
     purchasePrice: number;
     txHash: string;
+    serviceToken?: string;
   },
 ) {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    const buyerAddress = args.buyerAddress.trim();
+    if (!buyerAddress) throw new Error("buyerAddress is required");
+
+    if (
+      actor &&
+      actor.role !== "admin" &&
+      !(await userOwnsAddress(ctx, actor, buyerAddress))
+    ) {
+      throw new Error("buyerAddress does not match caller wallet");
+    }
+
     const event = await ctx.db.get(args.eventId);
     if (!event) throw new Error("Event not found");
     if (event.status !== "active") throw new Error("Event not active");
@@ -202,9 +265,9 @@ async function recordPurchaseWithQrToken(
     const ticketId = await ctx.db.insert("tickets", {
       eventId: args.eventId,
       tokenId: args.tokenId,
-      buyerAddress: args.buyerAddress,
+      buyerAddress,
       buyerAgentId: args.buyerAgentId,
-      purchasePrice: args.purchasePrice,
+      purchasePrice: event.price,
       txHash: args.txHash,
       qrCode: await generateUniqueQrCode(ctx),
       checkedInAt: undefined,
@@ -215,7 +278,7 @@ async function recordPurchaseWithQrToken(
     const qr = await issueTicketQrToken(ctx, {
       ticketId,
       eventId: args.eventId,
-      buyerAddress: args.buyerAddress,
+      buyerAddress,
     });
 
     // Keep legacy ticket.qrCode in sync while the app migrates to tokenized QR.
@@ -231,10 +294,33 @@ async function recordPurchaseWithQrToken(
 export const scanForCheckIn = mutation({
   args: {
     qrCode: v.string(),
-    organizerAddress: v.string(),
+    organizerAddress: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
   },
   returns: scanResultValidator,
   handler: async (ctx, args): Promise<ScanResult> => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+
+    const organizerCandidates = new Set<string>();
+    if (actor?.walletAddress) {
+      organizerCandidates.add(actor.walletAddress.toLowerCase());
+    }
+    if (actor) {
+      const wallets = await ctx.db
+        .query("wallets")
+        .withIndex("by_user", (q) => q.eq("userId", actor._id))
+        .collect();
+      for (const wallet of wallets) {
+        organizerCandidates.add(wallet.walletAddress.toLowerCase());
+      }
+    } else {
+      const organizerAddress = args.organizerAddress?.trim();
+      if (!organizerAddress) {
+        throw new Error("organizerAddress is required for service calls");
+      }
+      organizerCandidates.add(organizerAddress.toLowerCase());
+    }
+
     const ticket = await ctx.db
       .query("tickets")
       .withIndex("by_qr_code", (q) => q.eq("qrCode", args.qrCode))
@@ -260,13 +346,21 @@ export const scanForCheckIn = mutation({
       };
     }
 
-    let isAuthorized = isSameAddress(event.creatorAddress, args.organizerAddress);
+    let isAuthorized = actor?.role === "admin";
+
+    if (!isAuthorized) {
+      isAuthorized = organizerCandidates.has(event.creatorAddress.toLowerCase());
+    }
+
     if (!isAuthorized && event.teamId) {
       const team = await ctx.db.get(event.teamId);
       if (team) {
-        isAuthorized =
-          isSameAddress(team.walletAddress, args.organizerAddress) ||
-          team.members.some((member) => isSameAddress(member, args.organizerAddress));
+        isAuthorized = organizerCandidates.has(team.walletAddress.toLowerCase());
+        if (!isAuthorized) {
+          isAuthorized = team.members.some((member) =>
+            organizerCandidates.has(member.toLowerCase()),
+          );
+        }
       }
     }
 
@@ -306,9 +400,10 @@ export const scanForCheckIn = mutation({
     }
 
     const checkedInAt = Date.now();
+    const checkedInBy = actor?.walletAddress ?? actor?._id ?? args.organizerAddress;
     await ctx.db.patch(ticket._id, {
       checkedInAt,
-      checkedInBy: args.organizerAddress,
+      checkedInBy,
     });
 
     return {
@@ -327,12 +422,21 @@ export const listForSale = mutation({
   args: {
     ticketId: v.id("tickets"),
     price: v.number(),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
     const ticket = await ctx.db.get(args.ticketId);
     if (!ticket) throw new Error("Ticket not found");
     if (ticket.status !== "active") throw new Error("Ticket not available");
+    if (
+      actor &&
+      actor.role !== "admin" &&
+      !(await userOwnsAddress(ctx, actor, ticket.buyerAddress))
+    ) {
+      throw new Error("Forbidden");
+    }
 
     await ctx.db.patch(args.ticketId, {
       status: "listed" as const,

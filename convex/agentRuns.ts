@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireSignedInUserOrService } from "./lib/auth";
 
 const sourceValidator = v.union(
   v.literal("telegram_bot"),
@@ -36,9 +37,12 @@ export const startRun = mutation({
     intent: v.string(),
     rawInput: v.string(),
     normalizedArgs: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("agentRuns"),
   handler: async (ctx, args) => {
+    await requireSignedInUserOrService(ctx, args.serviceToken);
+
     return await ctx.db.insert("agentRuns", {
       userId: args.userId,
       source: args.source,
@@ -58,9 +62,12 @@ export const finishRun = mutation({
     response: v.optional(v.string()),
     error: v.optional(v.string()),
     txHash: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireSignedInUserOrService(ctx, args.serviceToken);
+
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Agent run not found");
 
@@ -76,9 +83,17 @@ export const finishRun = mutation({
 });
 
 export const listByUser = query({
-  args: { userId: v.id("users") },
+  args: {
+    userId: v.id("users"),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.array(runValidator),
   handler: async (ctx, args) => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (actor && actor.role !== "admin" && actor._id !== args.userId) {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db
       .query("agentRuns")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))

@@ -30,6 +30,18 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) {
+    throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  }
+  return token;
+}
+
+function isEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
 function extractEventIdFromPath(path: string): string | null {
   const match = path.match(/\/api\/events\/([^/]+)\/buy$/);
   return match?.[1] ?? null;
@@ -146,10 +158,9 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const eventId = extractEventIdFromPath(url.pathname) ?? "";
 
-  const requestedBuyer =
-    url.searchParams.get("buyer") ??
-    request.headers.get("x-buyer-address") ??
-    "unknown";
+  const requestedBuyerRaw =
+    url.searchParams.get("buyer") ?? request.headers.get("x-buyer-address");
+  const requestedBuyer = requestedBuyerRaw?.trim() || undefined;
   const buyerAgentId =
     url.searchParams.get("agent") ??
     request.headers.get("x-agent-id") ??
@@ -157,6 +168,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const convex = getConvexClient();
+    const serviceToken = getConvexServiceToken();
     const event = await convex.query(api.events.get, {
       id: eventId as Id<"events">,
     });
@@ -167,7 +179,7 @@ export async function GET(request: NextRequest) {
           ticketId: null,
           qrCode: null,
           eventId,
-          buyer: requestedBuyer,
+          buyer: requestedBuyer ?? "",
           message: "Event not found",
           txHash: null,
           timestamp: new Date().toISOString(),
@@ -191,7 +203,7 @@ export async function GET(request: NextRequest) {
           ticketId: null,
           qrCode: null,
           eventId,
-          buyer: requestedBuyer,
+          buyer: requestedBuyer ?? "",
           message,
           txHash: null,
           timestamp: new Date().toISOString(),
@@ -202,12 +214,29 @@ export async function GET(request: NextRequest) {
     }
 
     if (processResult.type === "no-payment-required") {
+      if (!requestedBuyer || !isEvmAddress(requestedBuyer)) {
+        return jsonWithHeaders(
+          {
+            success: false,
+            ticketId: null,
+            qrCode: null,
+            eventId,
+            buyer: requestedBuyer ?? "",
+            message: "buyer must be a valid wallet address for free events",
+            txHash: null,
+            timestamp: new Date().toISOString(),
+          },
+          400,
+        );
+      }
+
       const purchase = await convex.mutation(api.tickets.recordPurchaseAndIssueQr, {
         eventId: eventId as Id<"events">,
         buyerAddress: requestedBuyer,
         buyerAgentId: buyerAgentId ?? undefined,
         purchasePrice: event.price,
         txHash: `free-${Date.now()}`,
+        serviceToken,
       });
 
       return jsonWithHeaders(
@@ -216,7 +245,7 @@ export async function GET(request: NextRequest) {
           ticketId: purchase.ticketId,
           qrCode: purchase.qrToken,
           eventId,
-          buyer: requestedBuyer,
+          buyer: requestedBuyer ?? "",
           message: "Free ticket granted",
           txHash: null,
           timestamp: new Date().toISOString(),
@@ -238,7 +267,7 @@ export async function GET(request: NextRequest) {
           ticketId: null,
           qrCode: null,
           eventId,
-          buyer: requestedBuyer,
+          buyer: requestedBuyer ?? "",
           message:
             settlement.errorMessage ??
             settlement.errorReason ??
@@ -250,13 +279,30 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const settledBuyer = settlement.payer ?? requestedBuyer;
+    const settledBuyerCandidate = settlement.payer ?? requestedBuyer;
+    if (!settledBuyerCandidate || !isEvmAddress(settledBuyerCandidate)) {
+      return jsonWithHeaders(
+        {
+          success: false,
+          ticketId: null,
+          qrCode: null,
+          eventId,
+          buyer: settledBuyerCandidate ?? "",
+          message: "Unable to determine a valid buyer wallet address",
+          txHash: settlement.transaction ?? null,
+          timestamp: new Date().toISOString(),
+        },
+        400,
+      );
+    }
+
     const purchase = await convex.mutation(api.tickets.recordPurchaseAndIssueQr, {
       eventId: eventId as Id<"events">,
-      buyerAddress: settledBuyer,
+      buyerAddress: settledBuyerCandidate,
       buyerAgentId: buyerAgentId ?? undefined,
       purchasePrice: event.price,
       txHash: settlement.transaction,
+      serviceToken,
     });
 
     return jsonWithHeaders(
@@ -265,7 +311,7 @@ export async function GET(request: NextRequest) {
         ticketId: purchase.ticketId,
         qrCode: purchase.qrToken,
         eventId,
-        buyer: settledBuyer,
+        buyer: settledBuyerCandidate,
         message: "Ticket purchased successfully via x402",
         txHash: settlement.transaction,
         timestamp: new Date().toISOString(),
@@ -280,7 +326,7 @@ export async function GET(request: NextRequest) {
         ticketId: null,
         qrCode: null,
         eventId,
-        buyer: requestedBuyer,
+        buyer: requestedBuyer ?? "",
         message: error instanceof Error ? error.message : "Purchase failed",
         txHash: null,
         timestamp: new Date().toISOString(),

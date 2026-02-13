@@ -34,6 +34,7 @@ cp .env.example .env.local
 # - CLERK_SECRET_KEY
 # - CLERK_JWT_ISSUER_DOMAIN (from Clerk JWT template named "convex")
 # - ADMIN_BOOTSTRAP_TOKEN (for one-time admin bootstrap via Convex CLI)
+# - CONVEX_SERVICE_TOKEN (same value in Next.js env and Convex env)
 # Plus your Convex URL, wallet address, etc.
 ```
 

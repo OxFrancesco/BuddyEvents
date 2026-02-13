@@ -1,11 +1,13 @@
 /// app/tickets/page.tsx — My tickets page
 "use client";
 
+import { useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import { useUser } from "@clerk/nextjs";
 import { useAccount } from "wagmi";
 import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,12 +15,47 @@ import { ConnectWallet } from "@/components/ConnectWallet";
 import { MonadFaucetButton } from "@/components/MonadFaucetButton";
 import { TicketQRCode } from "@/components/TicketQRCode";
 
+type Ticket = {
+  _id: Id<"tickets">;
+  eventId: Id<"events">;
+  tokenId?: number;
+  buyerAddress: string;
+  purchasePrice: number;
+  txHash: string;
+  qrCode: string;
+  checkedInAt?: number;
+  checkedInBy?: string;
+  status: "active" | "listed" | "transferred" | "refunded";
+};
+
 export default function TicketsPage() {
   const { address, isConnected } = useAccount();
+  const { isSignedIn } = useUser();
+  const upsertMe = useMutation(api.users.upsertMe);
   const tickets = useQuery(
     api.tickets.listByBuyer,
-    address ? { buyerAddress: address } : "skip",
+    address && isSignedIn ? { buyerAddress: address } : "skip",
   );
+  const eventIds = useMemo(
+    () =>
+      tickets
+        ? Array.from(new Set(tickets.map((ticket) => ticket.eventId)))
+        : [],
+    [tickets],
+  );
+  const events = useQuery(
+    api.events.getMany,
+    eventIds.length > 0 ? { ids: eventIds } : "skip",
+  );
+  const eventsById = useMemo(
+    () => new Map((events ?? []).map((event) => [event._id, event])),
+    [events],
+  );
+
+  useEffect(() => {
+    if (!isSignedIn) return;
+    void upsertMe({ walletAddress: address ?? undefined });
+  }, [address, isSignedIn, upsertMe]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -46,6 +83,11 @@ export default function TicketsPage() {
             <p className="text-muted-foreground">Sign in and connect your wallet to see your tickets</p>
             <ConnectWallet />
           </div>
+        ) : !isSignedIn ? (
+          <div className="text-center py-24 space-y-4">
+            <p className="text-muted-foreground">Sign in with Clerk to load your tickets.</p>
+            <Button disabled>Sign-in required</Button>
+          </div>
         ) : tickets === undefined ? (
           <div className="text-center py-24 text-muted-foreground">
             Loading tickets...
@@ -60,7 +102,11 @@ export default function TicketsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {tickets.map((ticket) => (
-              <TicketCard key={ticket._id} ticket={ticket} />
+              <TicketCard
+                key={ticket._id}
+                ticket={ticket}
+                event={eventsById.get(ticket.eventId)}
+              />
             ))}
           </div>
         )}
@@ -69,24 +115,24 @@ export default function TicketsPage() {
   );
 }
 
+function getTicketBadgeVariant(status: Ticket["status"]) {
+  switch (status) {
+    case "active":
+      return "default";
+    case "listed":
+      return "secondary";
+    default:
+      return "outline";
+  }
+}
+
 function TicketCard({
   ticket,
+  event,
 }: {
-  ticket: {
-    _id: Id<"tickets">;
-    eventId: Id<"events">;
-    tokenId?: number;
-    buyerAddress: string;
-    purchasePrice: number;
-    txHash: string;
-    qrCode: string;
-    checkedInAt?: number;
-    checkedInBy?: string;
-    status: "active" | "listed" | "transferred" | "refunded";
-  };
+  ticket: Ticket;
+  event: Doc<"events"> | undefined;
 }) {
-  const event = useQuery(api.events.get, { id: ticket.eventId });
-
   return (
     <Card>
       <CardHeader>
@@ -94,15 +140,7 @@ function TicketCard({
           <CardTitle className="text-lg">
             {event?.name ?? "Loading..."}
           </CardTitle>
-          <Badge
-            variant={
-              ticket.status === "active"
-                ? "default"
-                : ticket.status === "listed"
-                  ? "secondary"
-                  : "outline"
-            }
-          >
+          <Badge variant={getTicketBadgeVariant(ticket.status)}>
             {ticket.status}
           </Badge>
         </div>

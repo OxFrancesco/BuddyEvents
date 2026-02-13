@@ -1,6 +1,7 @@
 import { mutation, query, type MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
+import { requireSignedInUserOrService } from "./lib/auth";
 
 async function sha256Hex(input: string) {
   const bytes = new TextEncoder().encode(input);
@@ -35,6 +36,25 @@ async function issueQrToken(
   return { ticketQrTokenId, token, tokenHash };
 }
 
+function isSameAddress(a: string | undefined, b: string): boolean {
+  if (!a) return false;
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+async function userOwnsTicket(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  ticket: Doc<"tickets">,
+): Promise<boolean> {
+  if (isSameAddress(user.walletAddress, ticket.buyerAddress)) return true;
+
+  const wallets = await ctx.db
+    .query("wallets")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .collect();
+  return wallets.some((wallet) => isSameAddress(wallet.walletAddress, ticket.buyerAddress));
+}
+
 const qrIssueResultValidator = v.object({
   ticketQrTokenId: v.id("ticketQrTokens"),
   token: v.string(),
@@ -47,11 +67,27 @@ export const issueForTicket = mutation({
     eventId: v.id("events"),
     userId: v.optional(v.id("users")),
     expiresAt: v.optional(v.number()),
+    serviceToken: v.optional(v.string()),
   },
   returns: qrIssueResultValidator,
   handler: async (ctx, args) => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
     const now = Date.now();
     const expiry = args.expiresAt ?? now + 1000 * 60 * 60 * 24;
+    const ticket = await ctx.db.get(args.ticketId);
+    if (!ticket) throw new Error("Ticket not found");
+    if (ticket.eventId !== args.eventId) {
+      throw new Error("Ticket does not belong to provided eventId");
+    }
+
+    if (actor) {
+      if (actor.role !== "admin" && !(await userOwnsTicket(ctx, actor, ticket))) {
+        throw new Error("Forbidden");
+      }
+      if (args.userId !== undefined && args.userId !== actor._id) {
+        throw new Error("userId must match the signed-in user");
+      }
+    }
 
     const existing = await ctx.db
       .query("ticketQrTokens")
@@ -118,7 +154,8 @@ export const getActiveByTicket = query({
 export const validateAndCheckIn = mutation({
   args: {
     token: v.string(),
-    checkedInByUserId: v.id("users"),
+    checkedInByUserId: v.optional(v.id("users")),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.object({
     ok: v.boolean(),
@@ -134,6 +171,25 @@ export const validateAndCheckIn = mutation({
     checkedInAt: v.optional(v.number()),
   }),
   handler: async (ctx, args): Promise<ValidateAndCheckInResult> => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+
+    let checkedInByUserId: Id<"users">;
+    if (actor) {
+      if (actor.role !== "admin") {
+        throw new Error("Admin access required");
+      }
+      checkedInByUserId = actor._id;
+    } else {
+      if (!args.checkedInByUserId) {
+        throw new Error("checkedInByUserId is required for service calls");
+      }
+      const admin = await ctx.db.get(args.checkedInByUserId);
+      if (!admin || admin.role !== "admin") {
+        throw new Error("checkedInByUserId must be an admin user");
+      }
+      checkedInByUserId = admin._id;
+    }
+
     const now = Date.now();
     const tokenHash = await sha256Hex(args.token);
     const qr = await ctx.db
@@ -196,12 +252,12 @@ export const validateAndCheckIn = mutation({
       ticketId: qr.ticketId,
       eventId: qr.eventId,
       checkedInAt: now,
-      checkedInByUserId: args.checkedInByUserId,
+      checkedInByUserId,
       qrTokenId: qr._id,
     });
     await ctx.db.patch(ticket._id, {
       checkedInAt: now,
-      checkedInBy: args.checkedInByUserId,
+      checkedInBy: checkedInByUserId,
     });
     await ctx.db.patch(qr._id, { revokedAt: now });
 

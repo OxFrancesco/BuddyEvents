@@ -39,6 +39,14 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) {
+    throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  }
+  return token;
+}
+
 function parseIntent(rawInput: string): PiIntent {
   const input = rawInput.trim().toLowerCase();
   if (input.startsWith("/events")) return "find_events";
@@ -76,6 +84,7 @@ export async function executePiAction(
   input: PiExecutionInput,
 ): Promise<PiExecutionResult> {
   const convex = getConvexClient();
+  const serviceToken = getConvexServiceToken();
   const intent = input.intent ?? parseIntent(input.rawInput);
 
   const runId = await convex.mutation(api.agentRuns.startRun, {
@@ -84,6 +93,7 @@ export async function executePiAction(
     intent,
     rawInput: input.rawInput,
     normalizedArgs: input.args ? JSON.stringify(input.args) : undefined,
+    serviceToken,
   });
 
   try {
@@ -106,16 +116,17 @@ export async function executePiAction(
         runId,
         status: "success",
         response: JSON.stringify(result.data),
+        serviceToken,
       });
       return result;
     }
 
     if (intent === "find_tickets") {
       const user = input.userId
-        ? await convex.query(api.users.getById, { userId: input.userId })
+        ? await convex.query(api.users.getById, { userId: input.userId, serviceToken })
         : null;
       const circleWallet = input.userId
-        ? await convex.query(api.wallets.getByUser, { userId: input.userId })
+        ? await convex.query(api.wallets.getByUser, { userId: input.userId, serviceToken })
         : null;
       const buyerAddress =
         (input.args?.buyerAddress as string | undefined) ??
@@ -124,7 +135,10 @@ export async function executePiAction(
       if (!buyerAddress) {
         throw new Error("No linked wallet. Connect wallet first.");
       }
-      const tickets = await convex.query(api.tickets.listByBuyer, { buyerAddress });
+      const tickets = await convex.query(api.tickets.listByBuyer, {
+        buyerAddress,
+        serviceToken,
+      });
       const result: PiExecutionResult = {
         ok: true,
         intent,
@@ -135,6 +149,7 @@ export async function executePiAction(
         runId,
         status: "success",
         response: JSON.stringify(result.data),
+        serviceToken,
       });
       return result;
     }
@@ -152,6 +167,7 @@ export async function executePiAction(
         runId,
         status: "success",
         response: JSON.stringify(result.data),
+        serviceToken,
       });
       return result;
     }
@@ -185,6 +201,7 @@ export async function executePiAction(
         buyerAgentId: "pi_telegram",
         purchasePrice: event.price,
         txHash: chainResult.txHash,
+        serviceToken,
       });
       const result: PiExecutionResult = {
         ok: true,
@@ -198,13 +215,14 @@ export async function executePiAction(
         status: "success",
         response: JSON.stringify(result.data),
         txHash: chainResult.txHash,
+        serviceToken,
       });
       return result;
     }
 
     if (intent === "create_event") {
       if (!input.userId) throw new Error("Authenticated user required");
-      const me = await convex.query(api.users.getById, { userId: input.userId });
+      const me = await convex.query(api.users.getById, { userId: input.userId, serviceToken });
       if (!me || me.role !== "admin") {
         throw new Error("Admin access required for event creation");
       }
@@ -238,6 +256,7 @@ export async function executePiAction(
         sponsors: [],
         location: String(args.location ?? ""),
         creatorAddress: wallet.walletAddress,
+        serviceToken,
       });
       const result: PiExecutionResult = {
         ok: true,
@@ -251,6 +270,7 @@ export async function executePiAction(
         status: "success",
         response: JSON.stringify(result.data),
         txHash: createTx.txHash,
+        serviceToken,
       });
       return result;
     }
@@ -263,11 +283,13 @@ export async function executePiAction(
     if (!ticketId) throw new Error("ticketId is required");
     const ticket = await convex.query(api.tickets.get, {
       id: ticketId as Id<"tickets">,
+      serviceToken,
     });
     if (!ticket) throw new Error("Ticket not found");
-    const user = await convex.query(api.users.getById, { userId: input.userId });
+    const user = await convex.query(api.users.getById, { userId: input.userId, serviceToken });
     const linkedWallet = await convex.query(api.wallets.getByUser, {
       userId: input.userId,
+      serviceToken,
     });
     if (
       !sameAddress(user?.walletAddress, ticket.buyerAddress) &&
@@ -280,6 +302,7 @@ export async function executePiAction(
       ticketId: ticket._id,
       eventId: ticket.eventId,
       userId: input.userId,
+      serviceToken,
     });
 
     const result: PiExecutionResult = {
@@ -292,6 +315,7 @@ export async function executePiAction(
       runId,
       status: "success",
       response: JSON.stringify(result.data),
+      serviceToken,
     });
     return result;
   } catch (error) {
@@ -301,6 +325,7 @@ export async function executePiAction(
       runId,
       status: "failed",
       error: message,
+      serviceToken,
     });
     return {
       ok: false,

@@ -1,6 +1,11 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { requireAdmin } from "./lib/auth";
+import { requireAdmin, requireSignedInUserOrService } from "./lib/auth";
+
+function isSameAddress(a: string | undefined, b: string): boolean {
+  if (!a) return false;
+  return a.toLowerCase() === b.toLowerCase();
+}
 
 const roleValidator = v.union(v.literal("user"), v.literal("admin"));
 
@@ -87,9 +92,17 @@ export const setRole = mutation({
 });
 
 export const getByClerkId = query({
-  args: { clerkId: v.string() },
+  args: {
+    clerkId: v.string(),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (caller && caller.role !== "admin" && caller.clerkId !== args.clerkId) {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db
       .query("users")
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", args.clerkId))
@@ -98,9 +111,21 @@ export const getByClerkId = query({
 });
 
 export const getByWallet = query({
-  args: { walletAddress: v.string() },
+  args: {
+    walletAddress: v.string(),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (
+      caller &&
+      caller.role !== "admin" &&
+      !isSameAddress(caller.walletAddress, args.walletAddress)
+    ) {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db
       .query("users")
       .withIndex("by_wallet", (q) => q.eq("walletAddress", args.walletAddress))
@@ -109,9 +134,17 @@ export const getByWallet = query({
 });
 
 export const getByTelegramUserId = query({
-  args: { telegramUserId: v.string() },
+  args: {
+    telegramUserId: v.string(),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (caller && caller.role !== "admin") {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db
       .query("users")
       .withIndex("by_telegram_user_id", (q) =>
@@ -122,9 +155,17 @@ export const getByTelegramUserId = query({
 });
 
 export const getById = query({
-  args: { userId: v.id("users") },
+  args: {
+    userId: v.id("users"),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (caller && caller.role !== "admin" && caller._id !== args.userId) {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db.get(args.userId);
   },
 });
@@ -139,9 +180,15 @@ export const upsertTelegramLink = mutation({
     telegramFirstName: v.optional(v.string()),
     telegramLastName: v.optional(v.string()),
     telegramPhotoUrl: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("users"),
   handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (caller && caller.role !== "admin" && caller.clerkId !== args.clerkId) {
+      throw new Error("Forbidden");
+    }
+
     const existingByTelegram = await ctx.db
       .query("users")
       .withIndex("by_telegram_user_id", (q) =>
@@ -194,9 +241,15 @@ export const upsertByClerkId = mutation({
     clerkId: v.string(),
     email: v.optional(v.string()),
     walletAddress: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("users"),
   handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (caller && caller.role !== "admin" && caller.clerkId !== args.clerkId) {
+      throw new Error("Forbidden");
+    }
+
     const existing = await ctx.db
       .query("users")
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", args.clerkId))

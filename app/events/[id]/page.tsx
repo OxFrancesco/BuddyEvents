@@ -1,9 +1,10 @@
 /// app/events/[id]/page.tsx — Event detail + buy ticket page
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation } from "convex/react";
+import { useUser } from "@clerk/nextjs";
 import {
   useAccount,
   useSwitchChain,
@@ -57,6 +58,8 @@ export default function EventDetailPage({
   );
   const { address, isConnected, chainId } = useAccount();
   const { switchChainAsync, isPending: isSwitchingChain } = useSwitchChain();
+  const upsertMe = useMutation(api.users.upsertMe);
+  const { isSignedIn } = useUser();
   const recordPurchase = useMutation(api.tickets.recordPurchaseAndIssueQr);
   const [txNotice, setTxNotice] = useState<string | null>(null);
 
@@ -77,6 +80,11 @@ export default function EventDetailPage({
   const { isSuccess: buyConfirmed } = useWaitForTransactionReceipt({
     hash: buyHash,
   });
+
+  useEffect(() => {
+    if (!isSignedIn) return;
+    void upsertMe({ walletAddress: address ?? undefined });
+  }, [address, isSignedIn, upsertMe]);
 
   if (event === undefined) {
     return (
@@ -100,7 +108,7 @@ export default function EventDetailPage({
   const isOnMonadTestnet = chainId === MONAD_TESTNET_CHAIN_ID;
 
   const handleBuyOnChain = async () => {
-    if (!address || !isConnected) return;
+    if (!address || !isConnected || !isSignedIn) return;
     setTxNotice(null);
     if (!isOnMonadTestnet) {
       try {
@@ -128,7 +136,7 @@ export default function EventDetailPage({
   };
 
   const handleBuyAfterApprove = async () => {
-    if (!address) return;
+    if (!address || !isSignedIn) return;
     setTxNotice(null);
     if (!isOnMonadTestnet) {
       try {
@@ -272,6 +280,13 @@ export default function EventDetailPage({
                       Sign in and connect your wallet to buy tickets
                     </p>
                     <ConnectWallet />
+                  </div>
+                ) : !isSignedIn ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Sign in with Clerk to complete ticket purchases.
+                    </p>
+                    <Button disabled className="w-full">Sign-in required</Button>
                   </div>
                 ) : !isOnMonadTestnet ? (
                   <div className="space-y-2">

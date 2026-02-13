@@ -28,6 +28,12 @@ function getWalletSetIdFromEnv() {
   return walletSetId;
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  return token;
+}
+
 // Create a wallet set (one-time setup for the platform)
 export async function createWalletSet(
   config: CircleWalletConfig,
@@ -172,7 +178,11 @@ export async function createOrGetCircleWalletForUser(
   convex: ConvexHttpClient,
   userId: Id<"users">,
 ) {
-  const existing = await convex.query(api.wallets.getByUser, { userId });
+  const serviceToken = getConvexServiceToken();
+  const existing = await convex.query(api.wallets.getByUser, {
+    userId,
+    serviceToken,
+  });
   if (existing) {
     return {
       walletId: existing.walletId,
@@ -194,6 +204,7 @@ export async function createOrGetCircleWalletForUser(
     walletId: created.id,
     walletAddress: created.address,
     blockchain: created.blockchain ?? "MONAD-TESTNET",
+    serviceToken,
   });
 
   return {

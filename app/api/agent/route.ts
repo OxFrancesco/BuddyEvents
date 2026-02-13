@@ -3,6 +3,7 @@
 
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
+import { auth } from "@clerk/nextjs/server";
 import { api } from "../../../convex/_generated/api";
 
 function getConvexClient() {
@@ -11,6 +12,17 @@ function getConvexClient() {
     throw new Error("NEXT_PUBLIC_CONVEX_URL is not set");
   }
   return new ConvexHttpClient(convexUrl);
+}
+
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  return token;
+}
+
+function isSameAddress(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase();
 }
 
 export async function GET(request: Request) {
@@ -43,12 +55,34 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const { userId: clerkUserId } = await auth();
+    if (!clerkUserId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const convex = getConvexClient();
+    const serviceToken = getConvexServiceToken();
+    const user = await convex.query(api.users.getByClerkId, {
+      clerkId: clerkUserId,
+      serviceToken,
+    });
+    if (!user) {
+      return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+    }
+
     const body = await request.json();
+    if (
+      user.role !== "admin" &&
+      !isSameAddress(user.walletAddress, body.ownerAddress)
+    ) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const agentId = await convex.mutation(api.agents.register, {
       name: body.name,
       walletAddress: body.walletAddress,
       ownerAddress: body.ownerAddress,
+      serviceToken,
     });
 
     return NextResponse.json({ agentId }, { status: 201 });

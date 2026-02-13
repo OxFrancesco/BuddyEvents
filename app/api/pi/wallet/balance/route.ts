@@ -10,6 +10,12 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  return token;
+}
+
 export async function GET() {
   try {
     const { userId: clerkUserId } = await auth();
@@ -18,7 +24,11 @@ export async function GET() {
     }
 
     const convex = getConvexClient();
-    const user = await convex.query(api.users.getByClerkId, { clerkId: clerkUserId });
+    const serviceToken = getConvexServiceToken();
+    const user = await convex.query(api.users.getByClerkId, {
+      clerkId: clerkUserId,
+      serviceToken,
+    });
     if (!user) {
       return NextResponse.json(
         { error: "No profile found. Connect wallet first." },
@@ -26,7 +36,10 @@ export async function GET() {
       );
     }
 
-    const wallet = await convex.query(api.wallets.getByUser, { userId: user._id });
+    const wallet = await convex.query(api.wallets.getByUser, {
+      userId: user._id,
+      serviceToken,
+    });
     if (!wallet) {
       return NextResponse.json(
         { error: "No linked Circle wallet found." },

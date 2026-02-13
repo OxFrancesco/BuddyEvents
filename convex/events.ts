@@ -3,7 +3,7 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { requireAdmin, requireSignedInUser } from "./lib/auth";
+import { requireAdmin, requireAdminOrService, requireSignedInUser } from "./lib/auth";
 
 const eventStatusValidator = v.union(
   v.literal("draft"),
@@ -82,6 +82,18 @@ export const get = query({
   returns: v.union(eventValidator, v.null()),
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+export const getMany = query({
+  args: { ids: v.array(v.id("events")) },
+  returns: v.array(eventValidator),
+  handler: async (ctx, args) => {
+    if (args.ids.length === 0) return [];
+
+    const uniqueIds = Array.from(new Set(args.ids));
+    const events = await Promise.all(uniqueIds.map((id) => ctx.db.get(id)));
+    return events.filter((event): event is Doc<"events"> => event !== null);
   },
 });
 
@@ -273,9 +285,12 @@ export const create = mutation({
     sponsors: v.optional(v.array(v.id("sponsors"))),
     location: v.string(),
     creatorAddress: v.string(),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("events"),
   handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+
     const team = await ctx.db.get(args.teamId);
     if (!team) throw new Error("Team not found");
 
@@ -450,9 +465,12 @@ export const edit = mutation({
     price: v.optional(v.number()),
     location: v.optional(v.string()),
     sponsors: v.optional(v.array(v.id("sponsors"))),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+
     const event = await ctx.db.get(args.id);
     if (!event) throw new Error("Event not found");
 
@@ -471,9 +489,14 @@ export const edit = mutation({
 });
 
 export const cancel = mutation({
-  args: { id: v.id("events") },
+  args: {
+    id: v.id("events"),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+
     const event = await ctx.db.get(args.id);
     if (!event) throw new Error("Event not found");
 

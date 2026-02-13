@@ -3,6 +3,7 @@
 
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { requireAdminOrService } from "./lib/auth";
 
 export const list = query({
   args: {},
@@ -27,9 +28,12 @@ export const create = mutation({
     logo: v.optional(v.string()),
     walletAddress: v.string(),
     contribution: v.optional(v.number()),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("sponsors"),
   handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+
     return await ctx.db.insert("sponsors", {
       name: args.name,
       logo: args.logo,

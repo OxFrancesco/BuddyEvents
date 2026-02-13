@@ -10,6 +10,12 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  return token;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -41,15 +47,20 @@ export async function POST(request: Request) {
     const walletAddress = body.walletAddress?.trim();
 
     const convex = getConvexClient();
+    const serviceToken = getConvexServiceToken();
     const clerk = await clerkClient();
 
     const linked = await convex.query(api.users.getByTelegramUserId, {
       telegramUserId,
+      serviceToken,
     });
 
     let clerkUserId = linked?.clerkId;
     if (!clerkUserId && walletAddress) {
-      const byWallet = await convex.query(api.users.getByWallet, { walletAddress });
+      const byWallet = await convex.query(api.users.getByWallet, {
+        walletAddress,
+        serviceToken,
+      });
       clerkUserId = byWallet?.clerkId;
     }
 
@@ -82,6 +93,7 @@ export async function POST(request: Request) {
       telegramFirstName: parsed.user.first_name,
       telegramLastName: parsed.user.last_name,
       telegramPhotoUrl: parsed.user.photo_url,
+      serviceToken,
     });
 
     const signInToken = await clerk.signInTokens.createSignInToken({

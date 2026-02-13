@@ -22,6 +22,12 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  return token;
+}
+
 export async function POST(request: Request) {
   try {
     const secretHeader = request.headers.get("x-telegram-bot-api-secret-token");
@@ -49,9 +55,11 @@ export async function POST(request: Request) {
     }
 
     const convex = getConvexClient();
+    const serviceToken = getConvexServiceToken();
     const user = telegramUserId
       ? await convex.query(api.users.getByTelegramUserId, {
           telegramUserId: String(telegramUserId),
+          serviceToken,
         })
       : null;
 

@@ -10,6 +10,12 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  return token;
+}
+
 export async function POST(request: Request) {
   try {
     const { userId: clerkUserId } = await auth();
@@ -18,7 +24,11 @@ export async function POST(request: Request) {
     }
 
     const convex = getConvexClient();
-    const user = await convex.query(api.users.getByClerkId, { clerkId: clerkUserId });
+    const serviceToken = getConvexServiceToken();
+    const user = await convex.query(api.users.getByClerkId, {
+      clerkId: clerkUserId,
+      serviceToken,
+    });
     if (!user || user.role !== "admin") {
       return NextResponse.json(
         { error: "Admin access required" },

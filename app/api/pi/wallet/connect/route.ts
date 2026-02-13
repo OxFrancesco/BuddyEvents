@@ -10,6 +10,12 @@ function getConvexClient() {
   return new ConvexHttpClient(convexUrl);
 }
 
+function getConvexServiceToken() {
+  const token = process.env.CONVEX_SERVICE_TOKEN;
+  if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
+  return token;
+}
+
 export async function POST() {
   try {
     const { userId: clerkUserId } = await auth();
@@ -18,15 +24,20 @@ export async function POST() {
     }
 
     const convex = getConvexClient();
-    let user = await convex.query(api.users.getByClerkId, { clerkId: clerkUserId });
+    const serviceToken = getConvexServiceToken();
+    let user = await convex.query(api.users.getByClerkId, {
+      clerkId: clerkUserId,
+      serviceToken,
+    });
     if (!user) {
       const clerk = await clerkClient();
       const clerkUser = await clerk.users.getUser(clerkUserId);
       const createdId = await convex.mutation(api.users.upsertByClerkId, {
         clerkId: clerkUserId,
         email: clerkUser.primaryEmailAddress?.emailAddress,
+        serviceToken,
       });
-      user = await convex.query(api.users.getById, { userId: createdId });
+      user = await convex.query(api.users.getById, { userId: createdId, serviceToken });
     }
     if (!user) throw new Error("Failed to create user profile");
 

@@ -1,5 +1,11 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireSignedInUserOrService } from "./lib/auth";
+
+function isSameAddress(a: string | undefined, b: string): boolean {
+  if (!a) return false;
+  return a.toLowerCase() === b.toLowerCase();
+}
 
 const walletValidator = v.object({
   _id: v.id("wallets"),
@@ -13,9 +19,17 @@ const walletValidator = v.object({
 });
 
 export const getByUser = query({
-  args: { userId: v.id("users") },
+  args: {
+    userId: v.id("users"),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.union(walletValidator, v.null()),
   handler: async (ctx, args) => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (actor && actor.role !== "admin" && actor._id !== args.userId) {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db
       .query("wallets")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -24,9 +38,21 @@ export const getByUser = query({
 });
 
 export const getByWalletAddress = query({
-  args: { walletAddress: v.string() },
+  args: {
+    walletAddress: v.string(),
+    serviceToken: v.optional(v.string()),
+  },
   returns: v.union(walletValidator, v.null()),
   handler: async (ctx, args) => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (
+      actor &&
+      actor.role !== "admin" &&
+      !isSameAddress(actor.walletAddress, args.walletAddress)
+    ) {
+      throw new Error("Forbidden");
+    }
+
     return await ctx.db
       .query("wallets")
       .withIndex("by_wallet_address", (q) =>
@@ -42,9 +68,20 @@ export const upsertCircleWallet = mutation({
     walletId: v.string(),
     walletAddress: v.string(),
     blockchain: v.string(),
+    serviceToken: v.optional(v.string()),
   },
   returns: v.id("wallets"),
   handler: async (ctx, args) => {
+    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (
+      actor &&
+      actor.role !== "admin" &&
+      args.userId !== undefined &&
+      args.userId !== actor._id
+    ) {
+      throw new Error("Forbidden");
+    }
+
     const existingByWalletId = await ctx.db
       .query("wallets")
       .withIndex("by_wallet_id", (q) => q.eq("walletId", args.walletId))

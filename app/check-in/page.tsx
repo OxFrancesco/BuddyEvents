@@ -1,9 +1,10 @@
 /// app/check-in/page.tsx — Organizer ticket check-in page
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation } from "convex/react";
+import { useUser } from "@clerk/nextjs";
 import { useAccount } from "wagmi";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -30,15 +31,22 @@ type CheckInResult = {
 
 export default function CheckInPage() {
   const { address, isConnected } = useAccount();
+  const { isSignedIn } = useUser();
+  const upsertMe = useMutation(api.users.upsertMe);
   const scanForCheckIn = useMutation(api.tickets.scanForCheckIn);
 
   const [qrCode, setQrCode] = useState("");
   const [result, setResult] = useState<CheckInResult | null>(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!isSignedIn) return;
+    void upsertMe({ walletAddress: address ?? undefined });
+  }, [address, isSignedIn, upsertMe]);
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!address || !qrCode.trim()) return;
+    if (!address || !isSignedIn || !qrCode.trim()) return;
 
     setLoading(true);
     setResult(null);
@@ -93,6 +101,13 @@ export default function CheckInPage() {
                   Connect the organizer wallet to validate tickets.
                 </p>
                 <ConnectWallet />
+              </div>
+            ) : !isSignedIn ? (
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">
+                  Sign in with Clerk to validate tickets.
+                </p>
+                <Button className="w-full" disabled>Sign-in required</Button>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-3">
