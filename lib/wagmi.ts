@@ -2,12 +2,11 @@
 
 import { createConfig, http } from "wagmi";
 import { monadTestnet } from "viem/chains";
-import { injected, walletConnect } from "wagmi/connectors";
+import { walletConnect } from "wagmi/connectors";
 
 export const wagmiConfig = createConfig({
   chains: [monadTestnet],
   connectors: [
-    injected(),
     walletConnect({
       projectId: process.env.NEXT_PUBLIC_WC_PROJECT_ID ?? "demo",
     }),

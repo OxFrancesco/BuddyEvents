@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ConnectWallet } from "@/components/ConnectWallet";
-import { MonadFaucetButton } from "@/components/MonadFaucetButton";
+import { Header } from "@/components/Header";
 
 type CheckInResult = {
   ok: boolean;
@@ -71,21 +71,10 @@ export default function CheckInPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
-        <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <Link href="/" className="text-xl font-bold">BuddyEvents</Link>
-          <div className="flex items-center gap-4">
-            <Link href="/events"><Button variant="ghost" size="sm">Events</Button></Link>
-            <Link href="/tickets"><Button variant="ghost" size="sm">My Tickets</Button></Link>
-            <Link href="/check-in"><Button variant="ghost" size="sm">Check-in</Button></Link>
-            <MonadFaucetButton />
-            <ConnectWallet />
-          </div>
-        </div>
-      </header>
+      <Header />
 
       <main className="container mx-auto max-w-2xl px-4 py-8">
-        <h1 className="mb-2 text-3xl font-bold">Organizer Check-in</h1>
+        <h1 className="mb-2 text-3xl font-black uppercase tracking-wide">Organizer Check-in</h1>
         <p className="mb-8 text-sm text-muted-foreground">
           Scan or paste a ticket QR code to validate entry. This marks valid tickets as checked-in.
         </p>
@@ -124,17 +113,17 @@ export default function CheckInPage() {
 
             {result && (
               <div
-                className={`rounded-md border p-4 text-sm ${
+                className={`border-2 p-4 text-sm ${
                   result.ok
-                    ? "border-green-500/40 bg-green-500/10"
-                    : "border-red-500/40 bg-red-500/10"
+                    ? "border-primary bg-primary/10"
+                    : "border-destructive bg-destructive/10"
                 }`}
               >
                 <div className="mb-2 flex items-center gap-2">
                   <Badge variant={result.ok ? "default" : "destructive"}>
                     {result.status}
                   </Badge>
-                  <span className="font-medium">{result.message}</span>
+                  <span className="font-bold">{result.message}</span>
                 </div>
                 {result.buyerAddress && (
                   <p className="font-mono text-xs">
@@ -147,7 +136,7 @@ export default function CheckInPage() {
                   </p>
                 )}
                 {result.checkedInAt && (
-                  <p className="text-xs">
+                  <p className="text-xs font-mono">
                     Checked in at: {new Date(result.checkedInAt).toLocaleString()}
                   </p>
                 )}

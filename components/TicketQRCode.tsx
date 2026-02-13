@@ -40,7 +40,7 @@ export function TicketQRCode({ value, size = 180 }: TicketQRCodeProps) {
 
   if (hasError) {
     return (
-      <div className="h-[180px] w-[180px] rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
+      <div className="h-[180px] w-[180px] border-2 border-dashed border-foreground p-3 text-center text-xs text-muted-foreground">
         QR generation failed
       </div>
     );
@@ -48,7 +48,7 @@ export function TicketQRCode({ value, size = 180 }: TicketQRCodeProps) {
 
   if (!dataUrl) {
     return (
-      <div className="h-[180px] w-[180px] animate-pulse rounded-md bg-muted" />
+      <div className="h-[180px] w-[180px] animate-pulse bg-muted border-2 border-foreground" />
     );
   }
 
@@ -58,7 +58,7 @@ export function TicketQRCode({ value, size = 180 }: TicketQRCodeProps) {
       alt="Ticket QR code"
       width={size}
       height={size}
-      className="rounded-md border bg-white p-2"
+      className="border-2 border-foreground bg-foreground p-2"
       loading="lazy"
       unoptimized
     />

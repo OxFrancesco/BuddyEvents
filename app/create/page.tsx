@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ConnectWallet } from "@/components/ConnectWallet";
+import { Header } from "@/components/Header";
 
 type DestinationType = "foundation" | "project" | "unassigned";
 
@@ -109,31 +110,12 @@ export default function CreateEventPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
-        <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <Link href="/" className="text-xl font-bold">
-            BuddyEvents
-          </Link>
-          <div className="flex items-center gap-4">
-            <Link href="/events">
-              <Button variant="ghost" size="sm">
-                Events
-              </Button>
-            </Link>
-            <Link href="/check-in">
-              <Button variant="ghost" size="sm">
-                Check-in
-              </Button>
-            </Link>
-            <ConnectWallet />
-          </div>
-        </div>
-      </header>
+      <Header />
 
       <main className="container mx-auto px-4 py-8 max-w-2xl">
         <Link
           href="/events"
-          className="text-sm text-muted-foreground hover:underline mb-4 block"
+          className="text-sm text-muted-foreground hover:text-primary font-mono uppercase tracking-wider mb-4 block"
         >
           &larr; Back to events
         </Link>
@@ -152,12 +134,12 @@ export default function CreateEventPage() {
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="rounded-md border p-4 space-y-3">
+                <div className="border-2 border-foreground/50 p-4 space-y-3">
                   <div className="space-y-2">
                     <Label htmlFor="destinationType">Submit Destination</Label>
                     <select
                       id="destinationType"
-                      className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+                      className="w-full h-10 border-2 border-foreground bg-background px-3 text-sm font-medium"
                       value={destinationType}
                       onChange={(e) =>
                         setDestinationType(e.target.value as DestinationType)
@@ -174,7 +156,7 @@ export default function CreateEventPage() {
                       <Label htmlFor="foundationId">Foundation</Label>
                       <select
                         id="foundationId"
-                        className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+                        className="w-full h-10 border-2 border-foreground bg-background px-3 text-sm font-medium"
                         value={selectedFoundationId}
                         onChange={(e) => setSelectedFoundationId(e.target.value)}
                         required
@@ -194,7 +176,7 @@ export default function CreateEventPage() {
                       <Label htmlFor="projectId">Project</Label>
                       <select
                         id="projectId"
-                        className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+                        className="w-full h-10 border-2 border-foreground bg-background px-3 text-sm font-medium"
                         value={selectedProjectId}
                         onChange={(e) => setSelectedProjectId(e.target.value)}
                         required

@@ -12,8 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConnectWallet } from "@/components/ConnectWallet";
-import { MonadFaucetButton } from "@/components/MonadFaucetButton";
 import { TicketQRCode } from "@/components/TicketQRCode";
+import { Header } from "@/components/Header";
 
 type Ticket = {
   _id: Id<"tickets">;
@@ -59,41 +59,30 @@ export default function TicketsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
-        <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <Link href="/" className="text-xl font-bold">BuddyEvents</Link>
-          <div className="flex items-center gap-4">
-            <Link href="/events"><Button variant="ghost" size="sm">Events</Button></Link>
-            <Link href="/tickets"><Button variant="ghost" size="sm">My Tickets</Button></Link>
-            <Link href="/check-in"><Button variant="ghost" size="sm">Check-in</Button></Link>
-            <MonadFaucetButton />
-            <ConnectWallet />
-          </div>
-        </div>
-      </header>
+      <Header />
 
       <main className="container mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold mb-2">My Tickets</h1>
-        <p className="text-muted-foreground mb-8">
+        <h1 className="text-3xl font-black uppercase tracking-wide mb-2">My Tickets</h1>
+        <p className="text-muted-foreground mb-8 text-sm">
           Your purchased event tickets (NFTs on Monad)
         </p>
 
         {!isConnected ? (
-          <div className="text-center py-24 space-y-4">
+          <div className="text-center py-24 space-y-4 border-2 border-dashed border-foreground/30">
             <p className="text-muted-foreground">Sign in and connect your wallet to see your tickets</p>
             <ConnectWallet />
           </div>
         ) : !isSignedIn ? (
-          <div className="text-center py-24 space-y-4">
+          <div className="text-center py-24 space-y-4 border-2 border-dashed border-foreground/30">
             <p className="text-muted-foreground">Sign in with Clerk to load your tickets.</p>
             <Button disabled>Sign-in required</Button>
           </div>
         ) : tickets === undefined ? (
-          <div className="text-center py-24 text-muted-foreground">
+          <div className="text-center py-24 text-muted-foreground border-2 border-dashed border-foreground/30">
             Loading tickets...
           </div>
         ) : tickets.length === 0 ? (
-          <div className="text-center py-24">
+          <div className="text-center py-24 border-2 border-dashed border-foreground/30">
             <p className="text-muted-foreground mb-4">No tickets yet.</p>
             <Link href="/events">
               <Button>Browse Events</Button>
@@ -137,7 +126,7 @@ function TicketCard({
     <Card>
       <CardHeader>
         <div className="flex justify-between items-start">
-          <CardTitle className="text-lg">
+          <CardTitle className="text-base">
             {event?.name ?? "Loading..."}
           </CardTitle>
           <Badge variant={getTicketBadgeVariant(ticket.status)}>
@@ -145,16 +134,16 @@ function TicketCard({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm">
+      <CardContent className="space-y-3 text-sm">
         {event && (
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Event Date</span>
-            <span>{new Date(event.startTime).toLocaleDateString()}</span>
+            <span className="text-muted-foreground uppercase text-xs tracking-wider">Event Date</span>
+            <span className="font-mono">{new Date(event.startTime).toLocaleDateString()}</span>
           </div>
         )}
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Paid</span>
-          <span className="font-mono">
+          <span className="text-muted-foreground uppercase text-xs tracking-wider">Paid</span>
+          <span className="font-mono font-bold">
             {ticket.purchasePrice === 0
               ? "Free"
               : `$${ticket.purchasePrice} USDC`}
@@ -162,30 +151,30 @@ function TicketCard({
         </div>
         {ticket.tokenId !== undefined && (
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Token ID</span>
+            <span className="text-muted-foreground uppercase text-xs tracking-wider">Token ID</span>
             <span className="font-mono">#{ticket.tokenId}</span>
           </div>
         )}
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Tx</span>
+          <span className="text-muted-foreground uppercase text-xs tracking-wider">Tx</span>
           <span className="font-mono text-xs truncate ml-2">
             {ticket.txHash.slice(0, 10)}...
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Entry</span>
-          <span className={ticket.checkedInAt ? "text-amber-600 font-medium" : "text-green-600 font-medium"}>
+          <span className="text-muted-foreground uppercase text-xs tracking-wider">Entry</span>
+          <span className={`font-bold ${ticket.checkedInAt ? "text-accent" : "text-primary"}`}>
             {ticket.checkedInAt ? "Used" : "Not used"}
           </span>
         </div>
         {ticket.checkedInAt && (
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Checked In</span>
-            <span className="text-xs">{new Date(ticket.checkedInAt).toLocaleString()}</span>
+            <span className="text-muted-foreground uppercase text-xs tracking-wider">Checked In</span>
+            <span className="text-xs font-mono">{new Date(ticket.checkedInAt).toLocaleString()}</span>
           </div>
         )}
         <div className="space-y-2 pt-1">
-          <p className="text-muted-foreground text-xs">Ticket QR</p>
+          <p className="text-muted-foreground text-xs uppercase tracking-wider">Ticket QR</p>
           <div className="flex justify-center">
             <TicketQRCode value={ticket.qrCode} />
           </div>

@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -30,7 +29,6 @@ interface EventCardProps {
 export function EventCard({
   id,
   name,
-  description,
   startTime,
   price,
   maxTickets,
@@ -42,20 +40,19 @@ export function EventCard({
   const spotsLeft = maxTickets - ticketsSold;
 
   return (
-    <Card className="flex flex-col hover:shadow-lg transition-shadow">
+    <Card className="flex flex-col h-full hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_var(--foreground)] transition-all">
       <CardHeader>
         <div className="flex justify-between items-start">
-          <CardTitle className="text-lg">{name}</CardTitle>
+          <CardTitle className="text-base">{name}</CardTitle>
           <Badge variant={status === "active" ? "default" : "secondary"}>
             {status}
           </Badge>
         </div>
-        <CardDescription className="line-clamp-2">{description}</CardDescription>
       </CardHeader>
-      <CardContent className="flex-1 space-y-2 text-sm">
+      <CardContent className="flex-1 space-y-3 text-sm">
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Date</span>
-          <span>
+          <span className="text-muted-foreground uppercase text-xs tracking-wider">Date</span>
+          <span className="font-mono">
             {startDate.toLocaleDateString("en-US", {
               month: "short",
               day: "numeric",
@@ -64,18 +61,18 @@ export function EventCard({
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Price</span>
-          <span className="font-mono font-semibold">
+          <span className="text-muted-foreground uppercase text-xs tracking-wider">Price</span>
+          <span className="font-mono font-bold">
             {price === 0 ? "Free" : `$${price} USDC`}
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Location</span>
-          <span className="truncate ml-2">{location || "TBD"}</span>
+          <span className="text-muted-foreground uppercase text-xs tracking-wider">Location</span>
+          <span className="truncate ml-2 font-mono">{location || "TBD"}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Spots</span>
-          <span>
+          <span className="text-muted-foreground uppercase text-xs tracking-wider">Spots</span>
+          <span className="font-mono font-bold">
             {spotsLeft > 0 ? `${spotsLeft} left` : "Sold out"}
           </span>
         </div>

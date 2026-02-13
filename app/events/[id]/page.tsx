@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ConnectWallet } from "@/components/ConnectWallet";
-import { MonadFaucetButton } from "@/components/MonadFaucetButton";
+import { Header } from "@/components/Header";
 import {
   BUDDY_EVENTS_ADDRESS,
   BUDDY_EVENTS_ABI,
@@ -63,7 +63,6 @@ export default function EventDetailPage({
   const recordPurchase = useMutation(api.tickets.recordPurchaseAndIssueQr);
   const [txNotice, setTxNotice] = useState<string | null>(null);
 
-  // Approve USDC
   const {
     writeContractAsync: approveUSDC,
     data: approveHash,
@@ -72,7 +71,6 @@ export default function EventDetailPage({
     hash: approveHash,
   });
 
-  // Buy ticket on-chain
   const {
     writeContractAsync: buyTicket,
     data: buyHash,
@@ -88,15 +86,15 @@ export default function EventDetailPage({
 
   if (event === undefined) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Loading event...</p>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-muted-foreground font-mono">Loading event...</p>
       </div>
     );
   }
   if (event === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Event not found</p>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="font-bold uppercase">Event not found</p>
       </div>
     );
   }
@@ -120,7 +118,6 @@ export default function EventDetailPage({
     }
 
     if (event.price > 0) {
-      // Step 1: Approve USDC
       try {
         await approveUSDC({
           chainId: MONAD_TESTNET_CHAIN_ID,
@@ -151,7 +148,6 @@ export default function EventDetailPage({
       return;
     }
 
-    // Step 2: Buy ticket on contract
     try {
       await buyTicket({
         chainId: MONAD_TESTNET_CHAIN_ID,
@@ -182,25 +178,14 @@ export default function EventDetailPage({
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
-        <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <Link href="/" className="text-xl font-bold">BuddyEvents</Link>
-          <div className="flex items-center gap-4">
-            <Link href="/events"><Button variant="ghost" size="sm">Events</Button></Link>
-            <Link href="/check-in"><Button variant="ghost" size="sm">Check-in</Button></Link>
-            <MonadFaucetButton />
-            <ConnectWallet />
-          </div>
-        </div>
-      </header>
+      <Header />
 
       <main className="container mx-auto px-4 py-8 max-w-4xl">
-        <Link href="/events" className="text-sm text-muted-foreground hover:underline mb-4 block">
+        <Link href="/events" className="text-sm text-muted-foreground hover:text-primary font-mono uppercase tracking-wider mb-4 block">
           &larr; Back to events
         </Link>
 
         <div className="grid md:grid-cols-3 gap-8">
-          {/* Event Details */}
           <div className="md:col-span-2 space-y-6">
             <div>
               <div className="flex items-center gap-3 mb-2">
@@ -211,24 +196,24 @@ export default function EventDetailPage({
                   <Badge variant="destructive">{spotsLeft} spots left!</Badge>
                 )}
               </div>
-              <h1 className="text-3xl font-bold">{event.name}</h1>
+              <h1 className="text-3xl font-black uppercase tracking-wide">{event.name}</h1>
             </div>
 
             <div className="space-y-3 text-sm">
               <div className="flex gap-8">
                 <div>
-                  <p className="text-muted-foreground">Start</p>
-                  <p className="font-medium">{startDate.toLocaleString()}</p>
+                  <p className="text-muted-foreground uppercase text-xs tracking-wider">Start</p>
+                  <p className="font-mono font-bold">{startDate.toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">End</p>
-                  <p className="font-medium">{endDate.toLocaleString()}</p>
+                  <p className="text-muted-foreground uppercase text-xs tracking-wider">End</p>
+                  <p className="font-mono font-bold">{endDate.toLocaleString()}</p>
                 </div>
               </div>
               {event.location && (
                 <div>
-                  <p className="text-muted-foreground">Location</p>
-                  <p className="font-medium">{event.location}</p>
+                  <p className="text-muted-foreground uppercase text-xs tracking-wider">Location</p>
+                  <p className="font-bold">{event.location}</p>
                 </div>
               )}
             </div>
@@ -236,8 +221,8 @@ export default function EventDetailPage({
             <Separator />
 
             <div>
-              <h2 className="text-lg font-semibold mb-2">About</h2>
-              <p className="text-muted-foreground whitespace-pre-wrap">
+              <h2 className="text-lg font-bold uppercase tracking-wider mb-2">About</h2>
+              <p className="text-muted-foreground whitespace-pre-wrap leading-relaxed">
                 {event.description || "No description provided."}
               </p>
             </div>
@@ -246,30 +231,29 @@ export default function EventDetailPage({
               <>
                 <Separator />
                 <div>
-                  <h2 className="text-lg font-semibold mb-2">Organized by</h2>
-                  <p className="font-medium">{team.name}</p>
+                  <h2 className="text-lg font-bold uppercase tracking-wider mb-2">Organized by</h2>
+                  <p className="font-bold">{team.name}</p>
                   <p className="text-sm text-muted-foreground">{team.description}</p>
                 </div>
               </>
             )}
           </div>
 
-          {/* Purchase Card */}
           <div>
             <Card className="sticky top-24">
               <CardHeader>
-                <CardTitle className="text-lg">Get Tickets</CardTitle>
+                <CardTitle>Get Tickets</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex justify-between text-sm">
-                  <span>Price</span>
-                  <span className="font-mono font-bold text-lg">
+                  <span className="text-muted-foreground uppercase text-xs tracking-wider">Price</span>
+                  <span className="font-mono font-black text-lg">
                     {event.price === 0 ? "Free" : `$${event.price} USDC`}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span>Available</span>
-                  <span>{spotsLeft} / {event.maxTickets}</span>
+                  <span className="text-muted-foreground uppercase text-xs tracking-wider">Available</span>
+                  <span className="font-mono font-bold">{spotsLeft} / {event.maxTickets}</span>
                 </div>
 
                 <Separator />
@@ -304,7 +288,7 @@ export default function EventDetailPage({
                     >
                       {isSwitchingChain ? "Switching..." : "Switch to Monad Testnet"}
                     </Button>
-                    <p className="text-xs text-muted-foreground text-center">
+                    <p className="text-xs text-muted-foreground text-center font-mono">
                       Wallet is on a different network.
                     </p>
                   </div>
@@ -327,21 +311,21 @@ export default function EventDetailPage({
                     <Button onClick={handleRecordPurchase} variant="secondary" className="w-full">
                       Confirm Purchase
                     </Button>
-                    <p className="text-xs text-center text-green-600">
+                    <p className="text-xs text-center text-primary font-bold">
                       Ticket purchased on-chain!
                     </p>
                   </div>
                 )}
 
-                <p className="text-xs text-muted-foreground text-center">
+                <p className="text-xs text-muted-foreground text-center font-mono uppercase tracking-wider">
                   NFT ticket on Monad via USDC
                 </p>
                 {txNotice && (
                   <p
-                    className={`text-xs text-center ${
+                    className={`text-xs text-center font-mono ${
                       txNotice.startsWith("Transaction canceled")
-                        ? "text-amber-600"
-                        : "text-red-600"
+                        ? "text-accent"
+                        : "text-destructive"
                     }`}
                   >
                     {txNotice}

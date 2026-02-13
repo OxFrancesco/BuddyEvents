@@ -195,21 +195,21 @@ export default function TelegramMiniAppPage() {
   }, [canRunActions]);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#1f2937_0%,#0b1120_45%,#06090f_100%)] text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-4xl px-4 py-8 space-y-6">
         <header className="space-y-2">
           <Badge variant="secondary">Telegram Mini App</Badge>
-          <h1 className="text-3xl font-semibold tracking-tight">BuddyEvents PI Agent</h1>
-          <p className="text-sm text-slate-300">
-            Auth status: <span className="font-medium text-white">{authStatus}</span>
+          <h1 className="text-3xl font-black uppercase tracking-widest">BuddyEvents PI Agent</h1>
+          <p className="text-sm text-muted-foreground">
+            Auth status: <span className="font-mono font-bold text-foreground">{authStatus}</span>
           </p>
-          {authError && <p className="text-sm text-red-300">{authError}</p>}
+          {authError && <p className="text-sm text-destructive font-mono">{authError}</p>}
         </header>
 
         <section className="grid gap-4 md:grid-cols-2">
-          <Card className="border-slate-700 bg-slate-900/60">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-white">Quick Actions</CardTitle>
+              <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3">
               <Button disabled={!canRunActions || busy} onClick={() => void runPi("/events")}>
@@ -232,13 +232,13 @@ export default function TelegramMiniAppPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-slate-700 bg-slate-900/60">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-white">Wallet</CardTitle>
+              <CardTitle>Wallet</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 text-sm text-slate-200">
+            <CardContent className="space-y-3 text-sm">
               <p>
-                Address:{" "}
+                <span className="text-muted-foreground uppercase text-xs tracking-wider">Address:</span>{" "}
                 <span className="font-mono text-xs break-all">
                   {walletInfo?.walletAddress ?? "Not connected"}
                 </span>
@@ -256,23 +256,21 @@ export default function TelegramMiniAppPage() {
                 placeholder="Convex event id"
                 value={buyEventId}
                 onChange={(e) => setBuyEventId(e.target.value)}
-                className="bg-slate-950 border-slate-700 text-white"
               />
             </CardContent>
           </Card>
         </section>
 
         <section className="grid gap-4 md:grid-cols-2">
-          <Card className="border-slate-700 bg-slate-900/60 md:col-span-2">
+          <Card className="md:col-span-2">
             <CardHeader>
-              <CardTitle className="text-white">Command Box</CardTitle>
+              <CardTitle>Command Box</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <Input
                 value={commandInput}
                 onChange={(e) => setCommandInput(e.target.value)}
                 placeholder="/events | /tickets | /buy <eventId> | /qr <ticketId>"
-                className="bg-slate-950 border-slate-700 text-white"
               />
               <Button
                 disabled={!canRunActions || busy || !commandInput.trim()}
@@ -283,9 +281,9 @@ export default function TelegramMiniAppPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-slate-700 bg-slate-900/60">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-white">Ticket QR</CardTitle>
+              <CardTitle>Ticket QR</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <Label htmlFor="qrTicketId">Ticket ID</Label>
@@ -294,7 +292,6 @@ export default function TelegramMiniAppPage() {
                 placeholder="Convex ticket id"
                 value={qrTicketId}
                 onChange={(e) => setQrTicketId(e.target.value)}
-                className="bg-slate-950 border-slate-700 text-white"
               />
               <Button disabled={!canRunActions || busy || !qrTicketId.trim()} onClick={() => void loadQr()}>
                 Generate QR Token
@@ -302,18 +299,18 @@ export default function TelegramMiniAppPage() {
               {qrToken && (
                 <div className="space-y-2">
                   <TicketQRCode value={qrToken} />
-                  <p className="font-mono text-[10px] break-all text-slate-300">{qrToken}</p>
+                  <p className="font-mono text-[10px] break-all text-muted-foreground">{qrToken}</p>
                 </div>
               )}
             </CardContent>
           </Card>
 
-          <Card className="border-slate-700 bg-slate-900/60">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-white">Agent Output</CardTitle>
+              <CardTitle>Agent Output</CardTitle>
             </CardHeader>
             <CardContent>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-3 text-xs text-slate-200">
+              <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-2 border-foreground bg-background p-3 text-xs font-mono">
                 {JSON.stringify(result, null, 2)}
               </pre>
             </CardContent>

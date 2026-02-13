@@ -40,18 +40,18 @@ export default function AdminEventsPage() {
 
   if (me === undefined || (isAdmin && pending === undefined)) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Loading moderation queue...
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground bg-background">
+        <p className="font-mono">Loading moderation queue...</p>
       </div>
     );
   }
 
   if (!me) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <Card className="max-w-md w-full">
           <CardHeader>
-            <CardTitle>Access denied</CardTitle>
+            <CardTitle>Access Denied</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
@@ -70,10 +70,10 @@ export default function AdminEventsPage() {
 
   if (!isAdmin) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <Card className="max-w-md w-full">
           <CardHeader>
-            <CardTitle>Admin only</CardTitle>
+            <CardTitle>Admin Only</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
@@ -94,10 +94,10 @@ export default function AdminEventsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b">
+      <header className="border-b-2 border-foreground">
         <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold">Admin Moderation</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-black uppercase tracking-widest">Admin Moderation</h1>
             <Badge variant="secondary">{pending?.length ?? 0} pending</Badge>
           </div>
           <Link href="/events">
@@ -134,7 +134,7 @@ export default function AdminEventsPage() {
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <CardTitle>{event.name}</CardTitle>
-                        <p className="text-sm text-muted-foreground mt-1">
+                        <p className="text-sm text-muted-foreground mt-1 font-mono">
                           Submitted by {event.submitterEmail ?? event.creatorAddress}
                         </p>
                       </div>
@@ -153,7 +153,7 @@ export default function AdminEventsPage() {
                         <Label htmlFor={`foundation-${event._id}`}>Foundation</Label>
                         <select
                           id={`foundation-${event._id}`}
-                          className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+                          className="w-full h-10 border-2 border-foreground bg-background px-3 text-sm font-medium"
                           value={selectedFoundation}
                           onChange={(e) =>
                             setFoundationByEvent((prev) => ({
@@ -175,7 +175,7 @@ export default function AdminEventsPage() {
                         <Label htmlFor={`project-${event._id}`}>Project</Label>
                         <select
                           id={`project-${event._id}`}
-                          className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+                          className="w-full h-10 border-2 border-foreground bg-background px-3 text-sm font-medium"
                           value={selectedProject}
                           onChange={(e) =>
                             setProjectByEvent((prev) => ({

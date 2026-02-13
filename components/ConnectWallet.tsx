@@ -1,10 +1,36 @@
 /// components/ConnectWallet.tsx — Wallet connect button for Monad
 "use client";
 
-import { useSyncExternalStore } from "react";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
-import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
+import { useState, useSyncExternalStore } from "react";
+import { useAccount, useConnect } from "wagmi";
+import { SignedIn, SignedOut, SignInButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
+import { Copy, Check, Wallet } from "lucide-react";
+
+function WalletBadge({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="group flex items-center gap-2 border-2 border-foreground bg-muted px-3 py-1.5 text-xs font-mono font-bold shadow-[2px_2px_0px_var(--foreground)] transition-all hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] active:scale-95"
+    >
+      <Wallet className="size-3.5" />
+      <span>{address.slice(0, 6)}...{address.slice(-4)}</span>
+      {copied ? (
+        <Check className="size-3 text-green-600" />
+      ) : (
+        <Copy className="size-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+      )}
+    </button>
+  );
+}
 
 export function ConnectWallet() {
   const mounted = useSyncExternalStore(
@@ -14,30 +40,30 @@ export function ConnectWallet() {
   );
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
-  const { disconnect } = useDisconnect();
+  const { user } = useUser();
 
-  // Keep SSR and initial client render identical to avoid hydration mismatch.
+  const clerkWallet = user?.primaryWeb3Wallet?.web3Wallet;
+
   if (!mounted) {
     return (
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" disabled>
-          Connect Wallet
-        </Button>
-      </div>
+      <Button variant="outline" size="sm" disabled>
+        Connect Wallet
+      </Button>
     );
   }
 
   if (isConnected && address) {
     return (
       <SignedIn>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-mono bg-muted px-2 py-1 rounded">
-            {address.slice(0, 6)}...{address.slice(-4)}
-          </span>
-          <Button variant="outline" size="sm" onClick={() => disconnect()}>
-            Disconnect
-          </Button>
-        </div>
+        <WalletBadge address={address} />
+      </SignedIn>
+    );
+  }
+
+  if (clerkWallet) {
+    return (
+      <SignedIn>
+        <WalletBadge address={clerkWallet} />
       </SignedIn>
     );
   }
@@ -53,16 +79,18 @@ export function ConnectWallet() {
       </SignedOut>
       <SignedIn>
         <div className="flex gap-2">
-          {connectors.map((connector) => (
-            <Button
-              key={connector.uid}
-              variant="outline"
-              size="sm"
-              onClick={() => connect({ connector })}
-            >
-              {connector.name === "Injected" ? "Connect Wallet" : connector.name}
-            </Button>
-          ))}
+          {connectors
+            .filter((c) => c.type === "walletConnect")
+            .map((connector) => (
+              <Button
+                key={connector.uid}
+                variant="outline"
+                size="sm"
+                onClick={() => connect({ connector })}
+              >
+                Connect Wallet
+              </Button>
+            ))}
         </div>
       </SignedIn>
     </>
