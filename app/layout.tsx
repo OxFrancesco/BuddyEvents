@@ -28,6 +28,9 @@ export const metadata: Metadata = {
   title: "BuddyEvents — Agent-Native Event Ticketing",
   description:
     "Buy, sell, create and manage event tickets with AI agents on Monad. Powered by x402 payments and NFT tickets.",
+  icons: {
+    icon: "/favicon.png",
+  },
 };
 
 export default function RootLayout({

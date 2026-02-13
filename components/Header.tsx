@@ -1,17 +1,19 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { MonadFaucetButton } from "@/components/MonadFaucetButton";
-import { SignedIn, UserButton } from "@clerk/nextjs";
+import { SignedIn } from "@clerk/nextjs";
 
 export function Header() {
   return (
     <header className="sticky top-0 z-50 border-b-2 border-foreground bg-background">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
-        <Link href="/" className="flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-2">
+          <Image src="/logo.svg" alt="BuddyEvents" width={36} height={36} />
           <span className="text-xl font-black uppercase tracking-widest">
             BuddyEvents
           </span>
@@ -34,9 +36,6 @@ export function Header() {
           </Link>
           <MonadFaucetButton />
           <ConnectWallet />
-          <SignedIn>
-            <UserButton />
-          </SignedIn>
         </nav>
       </div>
     </header>

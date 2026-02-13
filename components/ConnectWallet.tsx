@@ -3,7 +3,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { useAccount, useConnect } from "wagmi";
-import { SignedIn, SignedOut, SignInButton, useUser } from "@clerk/nextjs";
+import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Copy, Check, Wallet } from "lucide-react";
 
@@ -17,18 +17,17 @@ function WalletBadge({ address }: { address: string }) {
   };
 
   return (
-    <button
-      onClick={handleCopy}
-      className="group flex items-center gap-2 border-2 border-foreground bg-muted px-3 py-1.5 text-xs font-mono font-bold shadow-[2px_2px_0px_var(--foreground)] transition-all hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] active:scale-95"
-    >
-      <Wallet className="size-3.5" />
-      <span>{address.slice(0, 6)}...{address.slice(-4)}</span>
-      {copied ? (
-        <Check className="size-3 text-green-600" />
-      ) : (
-        <Copy className="size-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-      )}
-    </button>
+    <div className="group flex items-center gap-2 border-2 border-foreground bg-muted px-2 py-1 text-xs font-mono font-bold shadow-[2px_2px_0px_var(--foreground)] transition-all hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]">
+      <UserButton />
+      <button onClick={handleCopy} className="flex items-center gap-2">
+        <span>{address.slice(0, 6)}...{address.slice(-4)}</span>
+        {copied ? (
+          <Check className="size-3 text-green-600" />
+        ) : (
+          <Copy className="size-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+        )}
+      </button>
+    </div>
   );
 }
 

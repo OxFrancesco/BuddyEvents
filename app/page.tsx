@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EventCard } from "@/components/EventCard";
 import { Header } from "@/components/Header";
+import { AnimatedLogo } from "@/components/AnimatedLogo";
 
 export default function Home() {
   const events = useQuery(api.events.list, { status: "active" });
@@ -18,6 +19,9 @@ export default function Home() {
 
       {/* Hero */}
       <section className="container mx-auto px-4 py-24 text-center">
+        <div className="mx-auto mb-8 flex justify-center">
+          <AnimatedLogo size={220} />
+        </div>
         <Badge className="mb-6" variant="secondary">
           Powered by x402 + Monad
         </Badge>
