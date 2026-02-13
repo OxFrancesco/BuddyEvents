@@ -127,6 +127,9 @@ var ticketsBuyCmd = &cobra.Command{
 			} else {
 				fmt.Printf("Ticket purchased!\n")
 				fmt.Printf("Ticket ID: %s\n", result.TicketID)
+				if result.QRCode != "" {
+					fmt.Printf("Ticket QR Code: %s\n", result.QRCode)
+				}
 				fmt.Printf("Settlement Tx: %s\n", result.TxHash)
 			}
 		}

@@ -43,6 +43,7 @@ async function loadEventFromPath(path: string): Promise<Doc<"events"> | null> {
 }
 
 async function loadTeamWallet(event: Doc<"events">): Promise<string> {
+  if (!event.teamId) return PAY_TO_ADDRESS;
   const convex = getConvexClient();
   const team = await convex.query(api.teams.get, { id: event.teamId });
   return team?.walletAddress ?? PAY_TO_ADDRESS;
@@ -105,6 +106,7 @@ httpServer.onProtectedRequest(async (context) => {
 type BuyTicketResponse = {
   success: boolean;
   ticketId: string | null;
+  qrCode: string | null;
   eventId: string;
   buyer: string;
   message: string;
@@ -163,6 +165,7 @@ export async function GET(request: NextRequest) {
         {
           success: false,
           ticketId: null,
+          qrCode: null,
           eventId,
           buyer: requestedBuyer,
           message: "Event not found",
@@ -186,6 +189,7 @@ export async function GET(request: NextRequest) {
         {
           success: false,
           ticketId: null,
+          qrCode: null,
           eventId,
           buyer: requestedBuyer,
           message,
@@ -198,7 +202,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (processResult.type === "no-payment-required") {
-      const ticketId = await convex.mutation(api.tickets.recordPurchase, {
+      const purchase = await convex.mutation(api.tickets.recordPurchaseAndIssueQr, {
         eventId: eventId as Id<"events">,
         buyerAddress: requestedBuyer,
         buyerAgentId: buyerAgentId ?? undefined,
@@ -209,7 +213,8 @@ export async function GET(request: NextRequest) {
       return jsonWithHeaders(
         {
           success: true,
-          ticketId,
+          ticketId: purchase.ticketId,
+          qrCode: purchase.qrToken,
           eventId,
           buyer: requestedBuyer,
           message: "Free ticket granted",
@@ -231,6 +236,7 @@ export async function GET(request: NextRequest) {
         {
           success: false,
           ticketId: null,
+          qrCode: null,
           eventId,
           buyer: requestedBuyer,
           message:
@@ -245,7 +251,7 @@ export async function GET(request: NextRequest) {
     }
 
     const settledBuyer = settlement.payer ?? requestedBuyer;
-    const ticketId = await convex.mutation(api.tickets.recordPurchase, {
+    const purchase = await convex.mutation(api.tickets.recordPurchaseAndIssueQr, {
       eventId: eventId as Id<"events">,
       buyerAddress: settledBuyer,
       buyerAgentId: buyerAgentId ?? undefined,
@@ -256,7 +262,8 @@ export async function GET(request: NextRequest) {
     return jsonWithHeaders(
       {
         success: true,
-        ticketId,
+        ticketId: purchase.ticketId,
+        qrCode: purchase.qrToken,
         eventId,
         buyer: settledBuyer,
         message: "Ticket purchased successfully via x402",
@@ -271,6 +278,7 @@ export async function GET(request: NextRequest) {
       {
         success: false,
         ticketId: null,
+        qrCode: null,
         eventId,
         buyer: requestedBuyer,
         message: error instanceof Error ? error.message : "Purchase failed",

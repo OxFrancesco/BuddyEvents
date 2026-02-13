@@ -25,6 +25,11 @@ export async function GET(request: Request) {
     | "ended"
     | "cancelled"
     | null;
+  const moderationStatus = url.searchParams.get("moderationStatus") as
+    | "pending"
+    | "approved"
+    | "rejected"
+    | null;
 
   try {
     const convex = getConvexClient();
@@ -42,6 +47,7 @@ export async function GET(request: Request) {
     }
     const events = await convex.query(api.events.list, {
       status: status ?? undefined,
+      moderationStatus: moderationStatus ?? undefined,
     });
     return NextResponse.json({ events });
   } catch (error) {

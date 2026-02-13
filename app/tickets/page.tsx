@@ -5,11 +5,13 @@ import Link from "next/link";
 import { useQuery } from "convex/react";
 import { useAccount } from "wagmi";
 import { api } from "../../convex/_generated/api";
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConnectWallet } from "@/components/ConnectWallet";
+import { MonadFaucetButton } from "@/components/MonadFaucetButton";
+import { TicketQRCode } from "@/components/TicketQRCode";
 
 export default function TicketsPage() {
   const { address, isConnected } = useAccount();
@@ -26,6 +28,8 @@ export default function TicketsPage() {
           <div className="flex items-center gap-4">
             <Link href="/events"><Button variant="ghost" size="sm">Events</Button></Link>
             <Link href="/tickets"><Button variant="ghost" size="sm">My Tickets</Button></Link>
+            <Link href="/check-in"><Button variant="ghost" size="sm">Check-in</Button></Link>
+            <MonadFaucetButton />
             <ConnectWallet />
           </div>
         </div>
@@ -39,7 +43,7 @@ export default function TicketsPage() {
 
         {!isConnected ? (
           <div className="text-center py-24 space-y-4">
-            <p className="text-muted-foreground">Connect your wallet to see your tickets</p>
+            <p className="text-muted-foreground">Sign in and connect your wallet to see your tickets</p>
             <ConnectWallet />
           </div>
         ) : tickets === undefined ? (
@@ -55,7 +59,7 @@ export default function TicketsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {tickets.map((ticket: (typeof tickets)[number]) => (
+            {tickets.map((ticket) => (
               <TicketCard key={ticket._id} ticket={ticket} />
             ))}
           </div>
@@ -65,7 +69,22 @@ export default function TicketsPage() {
   );
 }
 
-function TicketCard({ ticket }: { ticket: Doc<"tickets"> }) {
+function TicketCard({
+  ticket,
+}: {
+  ticket: {
+    _id: Id<"tickets">;
+    eventId: Id<"events">;
+    tokenId?: number;
+    buyerAddress: string;
+    purchasePrice: number;
+    txHash: string;
+    qrCode: string;
+    checkedInAt?: number;
+    checkedInBy?: string;
+    status: "active" | "listed" | "transferred" | "refunded";
+  };
+}) {
   const event = useQuery(api.events.get, { id: ticket.eventId });
 
   return (
@@ -114,6 +133,27 @@ function TicketCard({ ticket }: { ticket: Doc<"tickets"> }) {
           <span className="font-mono text-xs truncate ml-2">
             {ticket.txHash.slice(0, 10)}...
           </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Entry</span>
+          <span className={ticket.checkedInAt ? "text-amber-600 font-medium" : "text-green-600 font-medium"}>
+            {ticket.checkedInAt ? "Used" : "Not used"}
+          </span>
+        </div>
+        {ticket.checkedInAt && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Checked In</span>
+            <span className="text-xs">{new Date(ticket.checkedInAt).toLocaleString()}</span>
+          </div>
+        )}
+        <div className="space-y-2 pt-1">
+          <p className="text-muted-foreground text-xs">Ticket QR</p>
+          <div className="flex justify-center">
+            <TicketQRCode value={ticket.qrCode} />
+          </div>
+          <p className="font-mono text-[10px] break-all text-muted-foreground">
+            {ticket.qrCode}
+          </p>
         </div>
 
         {ticket.status === "active" && event && (

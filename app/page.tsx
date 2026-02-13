@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EventCard } from "@/components/EventCard";
 import { ConnectWallet } from "@/components/ConnectWallet";
-import { UserButton, SignInButton } from "@clerk/nextjs";
-import { Authenticated, Unauthenticated } from "convex/react";
+import { MonadFaucetButton } from "@/components/MonadFaucetButton";
+import { SignedIn, UserButton } from "@clerk/nextjs";
 
 export default function Home() {
   const events = useQuery(api.events.list, { status: "active" });
@@ -41,17 +41,16 @@ export default function Home() {
                 Create Event
               </Button>
             </Link>
+            <Link href="/check-in">
+              <Button variant="ghost" size="sm">
+                Check-in
+              </Button>
+            </Link>
+            <MonadFaucetButton />
             <ConnectWallet />
-            <Authenticated>
+            <SignedIn>
               <UserButton />
-            </Authenticated>
-            <Unauthenticated>
-              <SignInButton mode="modal">
-                <Button variant="outline" size="sm">
-                  Sign In
-                </Button>
-              </SignInButton>
-            </Unauthenticated>
+            </SignedIn>
           </nav>
         </div>
       </header>

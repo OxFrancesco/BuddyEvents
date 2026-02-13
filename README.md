@@ -33,7 +33,14 @@ cp .env.example .env.local
 # - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 # - CLERK_SECRET_KEY
 # - CLERK_JWT_ISSUER_DOMAIN (from Clerk JWT template named "convex")
+# - ADMIN_BOOTSTRAP_TOKEN (for one-time admin bootstrap via Convex CLI)
 # Plus your Convex URL, wallet address, etc.
+```
+
+### 2.1 Bootstrap first admin user
+
+```bash
+npx convex run users:bootstrapAdmin '{"clerkId":"<clerk_user_id>","bootstrapToken":"<ADMIN_BOOTSTRAP_TOKEN>"}'
 ```
 
 ### 3. Deploy smart contract

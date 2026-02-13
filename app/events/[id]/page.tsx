@@ -1,10 +1,15 @@
 /// app/events/[id]/page.tsx — Event detail + buy ticket page
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation } from "convex/react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import {
+  useAccount,
+  useSwitchChain,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from "wagmi";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -12,12 +17,32 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ConnectWallet } from "@/components/ConnectWallet";
+import { MonadFaucetButton } from "@/components/MonadFaucetButton";
 import {
   BUDDY_EVENTS_ADDRESS,
   BUDDY_EVENTS_ABI,
   MONAD_USDC_TESTNET,
+  MONAD_TESTNET_CHAIN_ID,
   ERC20_ABI,
 } from "@/lib/monad";
+
+function isUserRejectedError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("user rejected") ||
+    normalized.includes("rejected the request") ||
+    normalized.includes("4001")
+  );
+}
+
+function toReadableError(error: unknown, fallback: string): string {
+  if (isUserRejectedError(error)) {
+    return "Transaction canceled in wallet. Click Buy Ticket and approve to continue.";
+  }
+  return error instanceof Error ? error.message : fallback;
+}
 
 export default function EventDetailPage({
   params,
@@ -28,19 +53,27 @@ export default function EventDetailPage({
   const event = useQuery(api.events.get, { id: id as Id<"events"> });
   const team = useQuery(
     api.teams.get,
-    event ? { id: event.teamId } : "skip",
+    event && event.teamId ? { id: event.teamId } : "skip",
   );
-  const { address, isConnected } = useAccount();
-  const recordPurchase = useMutation(api.tickets.recordPurchase);
+  const { address, isConnected, chainId } = useAccount();
+  const { switchChainAsync, isPending: isSwitchingChain } = useSwitchChain();
+  const recordPurchase = useMutation(api.tickets.recordPurchaseAndIssueQr);
+  const [txNotice, setTxNotice] = useState<string | null>(null);
 
   // Approve USDC
-  const { writeContract: approveUSDC, data: approveHash } = useWriteContract();
+  const {
+    writeContractAsync: approveUSDC,
+    data: approveHash,
+  } = useWriteContract();
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
     hash: approveHash,
   });
 
   // Buy ticket on-chain
-  const { writeContract: buyTicket, data: buyHash } = useWriteContract();
+  const {
+    writeContractAsync: buyTicket,
+    data: buyHash,
+  } = useWriteContract();
   const { isSuccess: buyConfirmed } = useWaitForTransactionReceipt({
     hash: buyHash,
   });
@@ -64,42 +97,79 @@ export default function EventDetailPage({
   const endDate = new Date(event.endTime);
   const spotsLeft = event.maxTickets - event.ticketsSold;
   const priceInUnits = BigInt(Math.floor(event.price * 1_000_000));
+  const isOnMonadTestnet = chainId === MONAD_TESTNET_CHAIN_ID;
 
   const handleBuyOnChain = async () => {
     if (!address || !isConnected) return;
+    setTxNotice(null);
+    if (!isOnMonadTestnet) {
+      try {
+        await switchChainAsync({ chainId: MONAD_TESTNET_CHAIN_ID });
+      } catch (error) {
+        setTxNotice(toReadableError(error, "Please switch to Monad Testnet to continue."));
+      }
+      return;
+    }
 
     if (event.price > 0) {
       // Step 1: Approve USDC
-      approveUSDC({
-        address: MONAD_USDC_TESTNET,
-        abi: ERC20_ABI,
-        functionName: "approve",
-        args: [BUDDY_EVENTS_ADDRESS, priceInUnits],
-      });
+      try {
+        await approveUSDC({
+          chainId: MONAD_TESTNET_CHAIN_ID,
+          address: MONAD_USDC_TESTNET,
+          abi: ERC20_ABI,
+          functionName: "approve",
+          args: [BUDDY_EVENTS_ADDRESS, priceInUnits],
+        });
+      } catch (error) {
+        setTxNotice(toReadableError(error, "USDC approve failed."));
+      }
     }
   };
 
   const handleBuyAfterApprove = async () => {
-    if (!address || event.onChainEventId === undefined) return;
+    if (!address) return;
+    setTxNotice(null);
+    if (!isOnMonadTestnet) {
+      try {
+        await switchChainAsync({ chainId: MONAD_TESTNET_CHAIN_ID });
+      } catch (error) {
+        setTxNotice(toReadableError(error, "Please switch to Monad Testnet to continue."));
+      }
+      return;
+    }
+    if (event.onChainEventId === undefined) {
+      setTxNotice("This event is not linked to an on-chain event ID yet.");
+      return;
+    }
 
     // Step 2: Buy ticket on contract
-    buyTicket({
-      address: BUDDY_EVENTS_ADDRESS,
-      abi: BUDDY_EVENTS_ABI,
-      functionName: "buyTicket",
-      args: [BigInt(event.onChainEventId)],
-    });
+    try {
+      await buyTicket({
+        chainId: MONAD_TESTNET_CHAIN_ID,
+        address: BUDDY_EVENTS_ADDRESS,
+        abi: BUDDY_EVENTS_ABI,
+        functionName: "buyTicket",
+        args: [BigInt(event.onChainEventId)],
+      });
+    } catch (error) {
+      setTxNotice(toReadableError(error, "Ticket purchase failed."));
+    }
   };
 
   const handleRecordPurchase = async () => {
     if (!address || !buyHash) return;
-
-    await recordPurchase({
-      eventId: event._id,
-      buyerAddress: address,
-      purchasePrice: event.price,
-      txHash: buyHash,
-    });
+    setTxNotice(null);
+    try {
+      await recordPurchase({
+        eventId: event._id,
+        buyerAddress: address,
+        purchasePrice: event.price,
+        txHash: buyHash,
+      });
+    } catch (error) {
+      setTxNotice(toReadableError(error, "Failed to record purchase."));
+    }
   };
 
   return (
@@ -109,6 +179,8 @@ export default function EventDetailPage({
           <Link href="/" className="text-xl font-bold">BuddyEvents</Link>
           <div className="flex items-center gap-4">
             <Link href="/events"><Button variant="ghost" size="sm">Events</Button></Link>
+            <Link href="/check-in"><Button variant="ghost" size="sm">Check-in</Button></Link>
+            <MonadFaucetButton />
             <ConnectWallet />
           </div>
         </div>
@@ -197,14 +269,36 @@ export default function EventDetailPage({
                 {!isConnected ? (
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">
-                      Connect your wallet to buy tickets
+                      Sign in and connect your wallet to buy tickets
                     </p>
                     <ConnectWallet />
+                  </div>
+                ) : !isOnMonadTestnet ? (
+                  <div className="space-y-2">
+                    <Button
+                      onClick={async () => {
+                        setTxNotice(null);
+                        try {
+                          await switchChainAsync({ chainId: MONAD_TESTNET_CHAIN_ID });
+                        } catch (error) {
+                          setTxNotice(toReadableError(error, "Please switch to Monad Testnet to continue."));
+                        }
+                      }}
+                      className="w-full"
+                      disabled={isSwitchingChain}
+                    >
+                      {isSwitchingChain ? "Switching..." : "Switch to Monad Testnet"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center">
+                      Wallet is on a different network.
+                    </p>
                   </div>
                 ) : spotsLeft === 0 ? (
                   <Button disabled className="w-full">Sold Out</Button>
                 ) : event.status !== "active" ? (
                   <Button disabled className="w-full">Event Not Active</Button>
+                ) : event.onChainEventId === undefined ? (
+                  <Button disabled className="w-full">Not Deployed On-chain</Button>
                 ) : !approveConfirmed && event.price > 0 ? (
                   <Button onClick={handleBuyOnChain} className="w-full">
                     {approveHash ? "Approving USDC..." : "Approve & Buy"}
@@ -227,6 +321,17 @@ export default function EventDetailPage({
                 <p className="text-xs text-muted-foreground text-center">
                   NFT ticket on Monad via USDC
                 </p>
+                {txNotice && (
+                  <p
+                    className={`text-xs text-center ${
+                      txNotice.startsWith("Transaction canceled")
+                        ? "text-amber-600"
+                        : "text-red-600"
+                    }`}
+                  >
+                    {txNotice}
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>

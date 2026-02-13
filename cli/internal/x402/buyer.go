@@ -21,6 +21,7 @@ import (
 type BuyTicketResponse struct {
 	Success   bool   `json:"success"`
 	TicketID  string `json:"ticketId"`
+	QRCode    string `json:"qrCode"`
 	EventID   string `json:"eventId"`
 	Buyer     string `json:"buyer"`
 	Message   string `json:"message"`
