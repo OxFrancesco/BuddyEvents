@@ -3,9 +3,9 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { useAccount, useConnect } from "wagmi";
-import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/nextjs";
+import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
-import { Copy, Check, Wallet } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 
 function WalletBadge({ address }: { address: string }) {
   const [copied, setCopied] = useState(false);
@@ -39,9 +39,7 @@ export function ConnectWallet() {
   );
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
-  const { user } = useUser();
-
-  const clerkWallet = user?.primaryWeb3Wallet?.web3Wallet;
+  const walletConnectors = connectors.filter((connector) => connector.type === "walletConnect");
 
   if (!mounted) {
     return (
@@ -59,14 +57,6 @@ export function ConnectWallet() {
     );
   }
 
-  if (clerkWallet) {
-    return (
-      <SignedIn>
-        <WalletBadge address={clerkWallet} />
-      </SignedIn>
-    );
-  }
-
   return (
     <>
       <SignedOut>
@@ -78,9 +68,12 @@ export function ConnectWallet() {
       </SignedOut>
       <SignedIn>
         <div className="flex gap-2">
-          {connectors
-            .filter((c) => c.type === "walletConnect")
-            .map((connector) => (
+          {walletConnectors.length === 0 ? (
+            <Button variant="outline" size="sm" disabled>
+              Wallet connector unavailable
+            </Button>
+          ) : (
+            walletConnectors.map((connector) => (
               <Button
                 key={connector.uid}
                 variant="outline"
@@ -89,7 +82,8 @@ export function ConnectWallet() {
               >
                 Connect Wallet
               </Button>
-            ))}
+            ))
+          )}
         </div>
       </SignedIn>
     </>
