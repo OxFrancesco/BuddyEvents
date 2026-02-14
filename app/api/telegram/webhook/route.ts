@@ -253,6 +253,92 @@ function shouldUseLlmReplies() {
   return process.env.PI_TELEGRAM_LLM_REPLIES?.toLowerCase() !== "false";
 }
 
+function getReplyModel() {
+  return (
+    process.env.OPENROUTER_REPLY_MODEL?.trim() ||
+    process.env.OPENROUTER_MODEL?.trim() ||
+    "z-ai/glm-5"
+  );
+}
+
+function getReplyTimeoutMs() {
+  const timeoutFromEnv = Number(process.env.PI_TELEGRAM_REPLY_TIMEOUT_MS ?? 5000);
+  return Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 5000;
+}
+
+function looksLikeSmallTalk(input: string) {
+  const text = input.trim().toLowerCase();
+  if (!text || text.startsWith("/")) return false;
+  return (
+    /^(hi|hello|hey|yo)\b/.test(text) ||
+    /\bhow are you\b/.test(text) ||
+    /\bwhat('?| i)s up\b/.test(text) ||
+    /\bthanks?\b/.test(text) ||
+    /\bgood (morning|afternoon|evening)\b/.test(text)
+  );
+}
+
+async function maybeGenerateSmallTalkReply(userInput: string): Promise<string | null> {
+  if (!shouldUseLlmReplies()) return null;
+
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  const model = getReplyModel();
+  const timeoutMs = getReplyTimeoutMs();
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        ...(process.env.NEXT_PUBLIC_APP_URL
+          ? { "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL }
+          : {}),
+        ...(process.env.OPENROUTER_APP_NAME
+          ? { "X-Title": process.env.OPENROUTER_APP_NAME }
+          : {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.6,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You are BuddyEvents Telegram assistant.",
+              "For small-talk, answer naturally in 1-2 short sentences.",
+              "Then suggest one concrete next action related to events.",
+              "Return JSON only in shape: {\"text\":\"...\"}.",
+            ].join(" "),
+          },
+          { role: "user", content: userInput },
+        ],
+      }),
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    if (!response.ok) return null;
+    const completion = (await response.json()) as ChatCompletionsResponse;
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) return null;
+    const parsed = JSON.parse(content) as { text?: unknown };
+    if (typeof parsed.text !== "string") return null;
+
+    const text = parsed.text.trim();
+    return text ? text.slice(0, 3500) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 async function maybeGenerateLlmReply(args: {
   userInput: string;
   result: PiExecutionResult;
@@ -263,14 +349,8 @@ async function maybeGenerateLlmReply(args: {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) return null;
 
-  const model =
-    process.env.OPENROUTER_REPLY_MODEL?.trim() ||
-    process.env.OPENROUTER_MODEL?.trim() ||
-    "z-ai/glm-5";
-
-  const timeoutFromEnv = Number(process.env.PI_TELEGRAM_REPLY_TIMEOUT_MS ?? 5000);
-  const timeoutMs =
-    Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 5000;
+  const model = getReplyModel();
+  const timeoutMs = getReplyTimeoutMs();
 
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
@@ -361,6 +441,20 @@ export async function POST(request: Request) {
   const miniAppBtn = buildMiniAppButton();
 
   try {
+    if (looksLikeSmallTalk(text)) {
+      const smallTalk = await maybeGenerateSmallTalkReply(text);
+      if (smallTalk) {
+        const rows: TelegramInlineKeyboardButton[][] = [];
+        if (miniAppBtn) rows.push([miniAppBtn]);
+        await sendTelegramMessage({
+          chat_id: chatId,
+          text: smallTalk,
+          reply_markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
+        });
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     if (command === "/start") {
       console.log("[telegram/webhook] /start from chat", chatId);
       const rows: TelegramInlineKeyboardButton[][] = [];
