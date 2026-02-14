@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import { executePiAction } from "../../../../lib/piAgent";
-import type { PiExecutionResult } from "../../../../lib/piAgent";
+import type { PiExecutionResult, PiIntent } from "../../../../lib/piAgent";
 import {
   sendTelegramMessage,
   verifyTelegramWebhookSecret,
@@ -21,6 +21,17 @@ type ChatCompletionsResponse = {
     };
   }>;
 };
+
+type TelegramLlmRouteDecision =
+  | {
+      mode: "chat";
+      text: string;
+    }
+  | {
+      mode: "pi_action";
+      intent: PiIntent;
+      args?: Record<string, unknown>;
+    };
 
 type TelegramUpdate = {
   message?: {
@@ -253,6 +264,10 @@ function shouldUseLlmReplies() {
   return process.env.PI_TELEGRAM_LLM_REPLIES?.toLowerCase() !== "false";
 }
 
+function shouldUseLlmRouter() {
+  return process.env.PI_TELEGRAM_LLM_ROUTER?.toLowerCase() !== "false";
+}
+
 function getReplyModel() {
   return (
     process.env.OPENROUTER_REPLY_MODEL?.trim() ||
@@ -261,9 +276,143 @@ function getReplyModel() {
   );
 }
 
+function getRouterModel() {
+  return (
+    process.env.OPENROUTER_ROUTER_MODEL?.trim() ||
+    process.env.OPENROUTER_MODEL?.trim() ||
+    "z-ai/glm-5"
+  );
+}
+
 function getReplyTimeoutMs() {
   const timeoutFromEnv = Number(process.env.PI_TELEGRAM_REPLY_TIMEOUT_MS ?? 5000);
   return Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 5000;
+}
+
+function getRouterTimeoutMs() {
+  const timeoutFromEnv = Number(process.env.PI_TELEGRAM_ROUTER_TIMEOUT_MS ?? 4500);
+  return Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 4500;
+}
+
+function isPiIntent(value: unknown): value is PiIntent {
+  return (
+    value === "find_events" ||
+    value === "find_tickets" ||
+    value === "connect_wallet" ||
+    value === "buy_ticket" ||
+    value === "create_event" ||
+    value === "get_event_qr"
+  );
+}
+
+function parseJsonObjectContent(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // continue to best-effort extraction
+  }
+
+  const first = content.indexOf("{");
+  const last = content.lastIndexOf("}");
+  if (first === -1 || last === -1 || first >= last) return null;
+
+  try {
+    const sliced = content.slice(first, last + 1);
+    const parsed = JSON.parse(sliced) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function maybeRouteTelegramInput(
+  userInput: string,
+): Promise<TelegramLlmRouteDecision | null> {
+  if (!shouldUseLlmRouter()) return null;
+  if (userInput.trim().startsWith("/")) return null;
+
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  const model = getRouterModel();
+  const timeoutMs = getRouterTimeoutMs();
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        ...(process.env.NEXT_PUBLIC_APP_URL
+          ? { "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL }
+          : {}),
+        ...(process.env.OPENROUTER_APP_NAME
+          ? { "X-Title": process.env.OPENROUTER_APP_NAME }
+          : {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You route Telegram user messages for BuddyEvents.",
+              "Decide either: mode=chat OR mode=pi_action.",
+              "Allowed intents for pi_action: find_events, find_tickets, connect_wallet, buy_ticket, create_event, get_event_qr.",
+              "If user is chatting or asking non-action questions, return mode=chat with a helpful short text.",
+              "If user requests an action, return mode=pi_action with intent and optional args object.",
+              "Use args only when the user clearly provides values (eventId, ticketId, etc).",
+              "Return only JSON with shape: {\"mode\":\"chat\",\"text\":\"...\"} or {\"mode\":\"pi_action\",\"intent\":\"...\",\"args\":{...}}.",
+            ].join(" "),
+          },
+          { role: "user", content: userInput },
+        ],
+      }),
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+
+    const completion = (await response.json()) as ChatCompletionsResponse;
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    const parsed = parseJsonObjectContent(content);
+    if (!parsed) return null;
+
+    const mode = parsed.mode;
+    if (mode === "chat" && typeof parsed.text === "string") {
+      const text = parsed.text.trim();
+      if (!text) return null;
+      return { mode: "chat", text: text.slice(0, 3500) };
+    }
+
+    if (mode === "pi_action" && isPiIntent(parsed.intent)) {
+      const args =
+        parsed.args &&
+        typeof parsed.args === "object" &&
+        !Array.isArray(parsed.args)
+          ? (parsed.args as Record<string, unknown>)
+          : undefined;
+      return { mode: "pi_action", intent: parsed.intent, args };
+    }
+
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 function looksLikeSmallTalk(input: string) {
@@ -441,20 +590,6 @@ export async function POST(request: Request) {
   const miniAppBtn = buildMiniAppButton();
 
   try {
-    if (looksLikeSmallTalk(text)) {
-      const smallTalk = await maybeGenerateSmallTalkReply(text);
-      if (smallTalk) {
-        const rows: TelegramInlineKeyboardButton[][] = [];
-        if (miniAppBtn) rows.push([miniAppBtn]);
-        await sendTelegramMessage({
-          chat_id: chatId,
-          text: smallTalk,
-          reply_markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
-        });
-        return NextResponse.json({ ok: true });
-      }
-    }
-
     if (command === "/start") {
       console.log("[telegram/webhook] /start from chat", chatId);
       const rows: TelegramInlineKeyboardButton[][] = [];
@@ -480,6 +615,40 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    let routedIntent: PiIntent | undefined;
+    let routedArgs: Record<string, unknown> | undefined;
+
+    if (!text.startsWith("/")) {
+      const route = await maybeRouteTelegramInput(text);
+      if (route?.mode === "chat") {
+        const rows: TelegramInlineKeyboardButton[][] = [];
+        if (miniAppBtn) rows.push([miniAppBtn]);
+        await sendTelegramMessage({
+          chat_id: chatId,
+          text: route.text,
+          reply_markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
+        });
+        return NextResponse.json({ ok: true });
+      }
+      if (route?.mode === "pi_action") {
+        routedIntent = route.intent;
+        routedArgs = route.args;
+      } else if (looksLikeSmallTalk(text)) {
+        // Fallback if router is unavailable.
+        const smallTalk = await maybeGenerateSmallTalkReply(text);
+        if (smallTalk) {
+          const rows: TelegramInlineKeyboardButton[][] = [];
+          if (miniAppBtn) rows.push([miniAppBtn]);
+          await sendTelegramMessage({
+            chat_id: chatId,
+            text: smallTalk,
+            reply_markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
+          });
+          return NextResponse.json({ ok: true });
+        }
+      }
+    }
+
     const convex = getConvexClient();
     const serviceToken = getConvexServiceToken();
     const user = telegramUserId
@@ -493,6 +662,8 @@ export async function POST(request: Request) {
       source: "telegram_bot",
       rawInput: text,
       userId: user?._id,
+      intent: routedIntent,
+      args: routedArgs,
     });
 
     if (result.intent === "find_events") {
