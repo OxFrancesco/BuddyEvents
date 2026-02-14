@@ -31,6 +31,19 @@ export type PiExecutionResult = {
   txHash?: string;
 };
 
+type ParsedPiInput = {
+  intent: PiIntent;
+  args: Record<string, unknown>;
+};
+
+type ChatCompletionsResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+  }>;
+};
+
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl) {
@@ -47,32 +60,164 @@ function getConvexServiceToken() {
   return token;
 }
 
-function parseIntent(rawInput: string): PiIntent {
+function isPiIntent(value: unknown): value is PiIntent {
+  return (
+    value === "find_events" ||
+    value === "find_tickets" ||
+    value === "connect_wallet" ||
+    value === "buy_ticket" ||
+    value === "create_event" ||
+    value === "get_event_qr"
+  );
+}
+
+function normalizeArgId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function extractCommandArg(rawInput: string, command: "buy" | "qr") {
+  const match = rawInput.match(
+    new RegExp(String.raw`\/${command}(?:@[a-zA-Z0-9_]+)?\s+([a-zA-Z0-9_-]+)`, "i"),
+  );
+  return match?.[1];
+}
+
+function parseIntentByKeywords(rawInput: string): ParsedPiInput {
   const input = rawInput.trim().toLowerCase();
-  if (input.startsWith("/events")) return "find_events";
-  if (input.startsWith("/tickets")) return "find_tickets";
-  if (input.startsWith("/wallet")) return "connect_wallet";
-  if (input.startsWith("/buy")) return "buy_ticket";
-  if (input.startsWith("/create")) return "create_event";
-  if (input.startsWith("/qr")) return "get_event_qr";
+  const buyEventId = extractCommandArg(rawInput, "buy");
+  const qrTicketId = extractCommandArg(rawInput, "qr");
 
-  if (input.includes("find") && input.includes("event")) return "find_events";
-  if (input.includes("ticket") && input.includes("my")) return "find_tickets";
-  if (input.includes("connect") && input.includes("wallet")) return "connect_wallet";
-  if (input.includes("buy") && input.includes("ticket")) return "buy_ticket";
-  if (input.includes("create") && input.includes("event")) return "create_event";
-  if (input.includes("qr")) return "get_event_qr";
-  return "find_events";
+  if (/^\/events(?:@[a-z0-9_]+)?\b/.test(input)) {
+    return { intent: "find_events", args: {} };
+  }
+  if (/^\/tickets(?:@[a-z0-9_]+)?\b/.test(input)) {
+    return { intent: "find_tickets", args: {} };
+  }
+  if (/^\/wallet(?:@[a-z0-9_]+)?\b/.test(input)) {
+    return { intent: "connect_wallet", args: {} };
+  }
+  if (/^\/buy(?:@[a-z0-9_]+)?\b/.test(input)) {
+    return { intent: "buy_ticket", args: buyEventId ? { eventId: buyEventId } : {} };
+  }
+  if (/^\/create(?:@[a-z0-9_]+)?\b/.test(input)) {
+    return { intent: "create_event", args: {} };
+  }
+  if (/^\/qr(?:@[a-z0-9_]+)?\b/.test(input)) {
+    return { intent: "get_event_qr", args: qrTicketId ? { ticketId: qrTicketId } : {} };
+  }
+
+  if (input.includes("find") && input.includes("event")) {
+    return { intent: "find_events", args: {} };
+  }
+  if (input.includes("ticket") && input.includes("my")) {
+    return { intent: "find_tickets", args: {} };
+  }
+  if (input.includes("connect") && input.includes("wallet")) {
+    return { intent: "connect_wallet", args: {} };
+  }
+  if (input.includes("buy") && (input.includes("ticket") || input.includes("event"))) {
+    return { intent: "buy_ticket", args: buyEventId ? { eventId: buyEventId } : {} };
+  }
+  if (input.includes("create") && input.includes("event")) {
+    return { intent: "create_event", args: {} };
+  }
+  if (input.includes("qr")) {
+    return { intent: "get_event_qr", args: qrTicketId ? { ticketId: qrTicketId } : {} };
+  }
+  return { intent: "find_events", args: {} };
 }
 
-function extractBuyEventId(rawInput: string) {
-  const match = rawInput.match(/\/buy\s+([a-zA-Z0-9_-]+)/);
-  return match?.[1];
+async function classifyIntentWithLlm(rawInput: string): Promise<ParsedPiInput | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  const model = process.env.OPENROUTER_MODEL?.trim() || "z-ai/glm-5";
+  const controller = new AbortController();
+  const timeoutFromEnv = Number(process.env.PI_INTENT_TIMEOUT_MS ?? 4000);
+  const timeoutMs =
+    Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 4000;
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        ...(process.env.NEXT_PUBLIC_APP_URL
+          ? { "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL }
+          : {}),
+        ...(process.env.OPENROUTER_APP_NAME
+          ? { "X-Title": process.env.OPENROUTER_APP_NAME }
+          : {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "Classify the user request into one PI intent and extract IDs when present.",
+              "Allowed intents: find_events, find_tickets, connect_wallet, buy_ticket, create_event, get_event_qr.",
+              "Return only JSON with shape: {\"intent\":\"...\",\"args\":{\"eventId\":\"...\",\"ticketId\":\"...\"}}.",
+              "Use args only when explicitly present in the user text.",
+              "If uncertain, choose find_events and keep args empty.",
+            ].join(" "),
+          },
+          { role: "user", content: rawInput },
+        ],
+      }),
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    if (!response.ok) return null;
+
+    const completion = (await response.json()) as ChatCompletionsResponse;
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    const parsed = JSON.parse(content) as {
+      intent?: unknown;
+      args?: Record<string, unknown>;
+    };
+    if (!isPiIntent(parsed.intent)) return null;
+
+    const args: Record<string, unknown> = {};
+    const eventId = normalizeArgId(parsed.args?.eventId);
+    const ticketId = normalizeArgId(parsed.args?.ticketId);
+    if (eventId) args.eventId = eventId;
+    if (ticketId) args.ticketId = ticketId;
+
+    return { intent: parsed.intent, args };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
-function extractQrTicketId(rawInput: string) {
-  const match = rawInput.match(/\/qr\s+([a-zA-Z0-9_-]+)/);
-  return match?.[1];
+async function parseIntentAndArgs(
+  rawInput: string,
+  keywordFallback: ParsedPiInput,
+): Promise<ParsedPiInput> {
+  const looksLikeSlashCommand = rawInput.trim().startsWith("/");
+  if (looksLikeSlashCommand) return keywordFallback;
+
+  const llm = await classifyIntentWithLlm(rawInput);
+  if (!llm) return keywordFallback;
+
+  return {
+    intent: llm.intent,
+    args: {
+      ...keywordFallback.args,
+      ...llm.args,
+    },
+  };
 }
 
 function sameAddress(a?: string, b?: string) {
@@ -85,14 +230,21 @@ export async function executePiAction(
 ): Promise<PiExecutionResult> {
   const convex = getConvexClient();
   const serviceToken = getConvexServiceToken();
-  const intent = input.intent ?? parseIntent(input.rawInput);
+  const keywordParse = parseIntentByKeywords(input.rawInput);
+  const parsed = input.intent ? null : await parseIntentAndArgs(input.rawInput, keywordParse);
+  const intent = input.intent ?? parsed?.intent ?? keywordParse.intent;
+  const args = {
+    ...keywordParse.args,
+    ...(parsed?.args ?? {}),
+    ...(input.args ?? {}),
+  };
 
   const runId = await convex.mutation(api.agentRuns.startRun, {
     userId: input.userId,
     source: input.source,
     intent,
     rawInput: input.rawInput,
-    normalizedArgs: input.args ? JSON.stringify(input.args) : undefined,
+    normalizedArgs: Object.keys(args).length > 0 ? JSON.stringify(args) : undefined,
     serviceToken,
   });
 
@@ -129,7 +281,7 @@ export async function executePiAction(
         ? await convex.query(api.wallets.getByUser, { userId: input.userId, serviceToken })
         : null;
       const buyerAddress =
-        (input.args?.buyerAddress as string | undefined) ??
+        (args.buyerAddress as string | undefined) ??
         circleWallet?.walletAddress ??
         user?.walletAddress;
       if (!buyerAddress) {
@@ -175,8 +327,8 @@ export async function executePiAction(
     if (intent === "buy_ticket") {
       if (!input.userId) throw new Error("Authenticated user required");
       const eventId =
-        (input.args?.eventId as string | undefined) ??
-        extractBuyEventId(input.rawInput);
+        (args.eventId as string | undefined) ??
+        extractCommandArg(input.rawInput, "buy");
       if (!eventId) {
         throw new Error("Event ID missing. Example: /buy <eventId>");
       }
@@ -227,7 +379,6 @@ export async function executePiAction(
         throw new Error("Admin access required for event creation");
       }
 
-      const args = input.args ?? {};
       const required = ["name", "teamId", "startTime", "endTime", "price", "maxTickets"];
       for (const key of required) {
         if (args[key] === undefined) {
@@ -278,8 +429,8 @@ export async function executePiAction(
     // get_event_qr
     if (!input.userId) throw new Error("Authenticated user required");
     const ticketId =
-      (input.args?.ticketId as string | undefined) ??
-      extractQrTicketId(input.rawInput);
+      (args.ticketId as string | undefined) ??
+      extractCommandArg(input.rawInput, "qr");
     if (!ticketId) throw new Error("ticketId is required");
     const ticket = await convex.query(api.tickets.get, {
       id: ticketId as Id<"tickets">,

@@ -14,6 +14,14 @@ type TelegramInlineKeyboardButton = {
   web_app?: { url: string };
 };
 
+type ChatCompletionsResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+  }>;
+};
+
 type TelegramUpdate = {
   message?: {
     text?: string;
@@ -133,22 +141,204 @@ function formatEventsResponse(result: PiExecutionResult): {
   return { text: header + cards + footer, buttons };
 }
 
+function asRecord(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  return data as Record<string, unknown>;
+}
+
+function fmtUtc(ms: unknown): string | null {
+  if (typeof ms !== "number") return null;
+  return new Date(ms).toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  });
+}
+
+function formatFailure(result: PiExecutionResult): string {
+  if (result.message.includes("Authenticated user required")) {
+    return [
+      "🔒 I need your account linked before I can do that.",
+      "Open the BuddyEvents Mini App once, then try again.",
+    ].join("\n");
+  }
+  return `❌ I couldn't complete that request: ${result.message}`;
+}
+
 function formatGenericResponse(result: PiExecutionResult): string {
-  const status = result.ok ? "✅" : "❌";
-  let text = `${status} ${result.message}`;
-  if (result.txHash) {
-    text += `\n🔗 Tx: \`${result.txHash}\``;
-  }
-  if (
-    result.data &&
-    (Array.isArray(result.data) || typeof result.data === "object")
-  ) {
-    const json = JSON.stringify(result.data, null, 2);
-    if (json.length > 10) {
-      text += `\n\n\`\`\`\n${json.slice(0, 1500)}\n\`\`\``;
+  if (!result.ok) return formatFailure(result);
+
+  if (result.intent === "find_tickets") {
+    const tickets = Array.isArray(result.data) ? result.data : [];
+    if (tickets.length === 0) {
+      return "🎟 You don't have any tickets yet. Use /events to find one, then /buy <eventId>.";
     }
+    const rows = tickets.slice(0, 8).map((ticket, index) => {
+      const rec = asRecord(ticket);
+      const ticketId = rec?._id ?? rec?.ticketId ?? "unknown";
+      const eventId = rec?.eventId ?? "unknown";
+      const status = rec?.status ?? "active";
+      return `${index + 1}. Ticket \`${String(ticketId)}\` for event \`${String(eventId)}\` (${String(status)})`;
+    });
+    return [
+      `🎟 You have ${tickets.length} ticket${tickets.length === 1 ? "" : "s"}.`,
+      ...rows,
+      "",
+      "Need a fresh QR? Send /qr <ticketId>.",
+    ].join("\n");
   }
-  return text;
+
+  if (result.intent === "connect_wallet") {
+    const data = asRecord(result.data);
+    const walletAddress = data?.walletAddress;
+    const blockchain = data?.blockchain;
+    return [
+      "✅ Your wallet is connected.",
+      walletAddress ? `Address: \`${String(walletAddress)}\`` : null,
+      blockchain ? `Network: ${String(blockchain)}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (result.intent === "buy_ticket") {
+    const data = asRecord(result.data);
+    const ticketId = data?.ticketId;
+    const expiry = fmtUtc(data?.qrTokenExpiresAt);
+    return [
+      "✅ Your ticket purchase is complete.",
+      ticketId ? `Ticket ID: \`${String(ticketId)}\`` : null,
+      result.txHash ? `Transaction: \`${result.txHash}\`` : null,
+      expiry ? `QR expires at: ${expiry} UTC` : null,
+      "",
+      ticketId ? `To refresh your QR later: /qr ${String(ticketId)}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (result.intent === "get_event_qr") {
+    const data = asRecord(result.data);
+    const token = data?.token;
+    const expiry = fmtUtc(data?.expiresAt);
+    return [
+      "✅ I generated a new QR token for your ticket.",
+      token ? `Token: \`${String(token)}\`` : null,
+      expiry ? `Expires at: ${expiry} UTC` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (result.intent === "create_event") {
+    const data = asRecord(result.data);
+    const eventId = data?.eventId;
+    return [
+      "✅ Event created successfully.",
+      eventId ? `Event ID: \`${String(eventId)}\`` : null,
+      result.txHash ? `Transaction: \`${result.txHash}\`` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return `✅ ${result.message}`;
+}
+
+function shouldUseLlmReplies() {
+  return process.env.PI_TELEGRAM_LLM_REPLIES?.toLowerCase() !== "false";
+}
+
+async function maybeGenerateLlmReply(args: {
+  userInput: string;
+  result: PiExecutionResult;
+  fallbackText: string;
+}): Promise<string | null> {
+  if (!shouldUseLlmReplies()) return null;
+
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  const model =
+    process.env.OPENROUTER_REPLY_MODEL?.trim() ||
+    process.env.OPENROUTER_MODEL?.trim() ||
+    "z-ai/glm-5";
+
+  const timeoutFromEnv = Number(process.env.PI_TELEGRAM_REPLY_TIMEOUT_MS ?? 5000);
+  const timeoutMs =
+    Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 5000;
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        ...(process.env.NEXT_PUBLIC_APP_URL
+          ? { "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL }
+          : {}),
+        ...(process.env.OPENROUTER_APP_NAME
+          ? { "X-Title": process.env.OPENROUTER_APP_NAME }
+          : {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You are BuddyEvents Telegram assistant.",
+              "Write a short, natural, helpful reply in plain text.",
+              "Use only facts in the provided JSON.",
+              "Never invent IDs, tx hashes, prices, or dates.",
+              "If an action failed, explain briefly and suggest the next command.",
+              "Return JSON only in shape: {\"text\":\"...\"}.",
+            ].join(" "),
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              userInput: args.userInput,
+              intent: args.result.intent,
+              ok: args.result.ok,
+              message: args.result.message,
+              txHash: args.result.txHash,
+              data: args.result.data ?? null,
+              fallbackText: args.fallbackText,
+            }),
+          },
+        ],
+      }),
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    if (!response.ok) return null;
+
+    const completion = (await response.json()) as ChatCompletionsResponse;
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    const parsed = JSON.parse(content) as { text?: unknown };
+    if (typeof parsed.text !== "string") return null;
+
+    const trimmed = parsed.text.trim();
+    if (!trimmed) return null;
+    return trimmed.slice(0, 3500);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 export async function POST(request: Request) {
@@ -213,22 +403,32 @@ export async function POST(request: Request) {
 
     if (result.intent === "find_events") {
       const { text: msgText, buttons } = formatEventsResponse(result);
+      const llmText = await maybeGenerateLlmReply({
+        userInput: text,
+        result,
+        fallbackText: msgText,
+      });
       const rows = [...buttons];
       if (miniAppBtn) rows.push([miniAppBtn]);
       await sendTelegramMessage({
         chat_id: chatId,
-        text: msgText,
-        parse_mode: "Markdown",
+        text: llmText ?? msgText,
+        parse_mode: llmText ? undefined : "Markdown",
         reply_markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
       });
     } else {
       const msgText = formatGenericResponse(result);
+      const llmText = await maybeGenerateLlmReply({
+        userInput: text,
+        result,
+        fallbackText: msgText,
+      });
       const rows: TelegramInlineKeyboardButton[][] = [];
       if (miniAppBtn) rows.push([miniAppBtn]);
       await sendTelegramMessage({
         chat_id: chatId,
-        text: msgText,
-        parse_mode: "Markdown",
+        text: llmText ?? msgText,
+        parse_mode: llmText ? undefined : "Markdown",
         reply_markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
       });
     }
