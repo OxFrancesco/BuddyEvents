@@ -17,6 +17,22 @@ type PiResult = {
   txHash?: string;
 };
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForTelegramWebAppInitData(
+  timeoutMs: number = 3000,
+): Promise<TelegramWebApp | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const webApp = (window as TelegramWindow).Telegram?.WebApp;
+    if (webApp?.initData) return webApp;
+    await sleep(100);
+  }
+  return null;
+}
+
 export default function TelegramMiniAppPage() {
   const { isLoaded, signIn, setActive } = useSignIn();
   const { isSignedIn } = useUser();
@@ -44,11 +60,12 @@ export default function TelegramMiniAppPage() {
         return;
       }
 
-      const tgWindow = window as TelegramWindow;
-      const webApp = tgWindow.Telegram?.WebApp;
-      if (!webApp?.initData) {
+      const webApp = await waitForTelegramWebAppInitData();
+      if (!webApp) {
         if (!ignore) {
-          setAuthError("Telegram WebApp init data not available.");
+          setAuthError(
+            "Telegram WebApp init data not available. Open this page from the bot's Mini App button.",
+          );
           setAuthStatus("Auth unavailable");
         }
         return;
