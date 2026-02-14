@@ -3,7 +3,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { useAccount, useConnect } from "wagmi";
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
+import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Copy, Check } from "lucide-react";
 
@@ -37,55 +37,51 @@ export function ConnectWallet() {
     () => true,
     () => false,
   );
+  const { isLoaded, isSignedIn } = useUser();
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
   const walletConnectors = connectors.filter((connector) => connector.type === "walletConnect");
 
-  if (!mounted) {
+  if (!mounted || !isLoaded) {
     return (
       <Button variant="outline" size="sm" disabled>
-        Connect Wallet
+        Loading...
       </Button>
     );
   }
 
-  if (isConnected && address) {
+  if (!isSignedIn) {
     return (
-      <SignedIn>
-        <WalletBadge address={address} />
-      </SignedIn>
+      <SignInButton mode="modal">
+        <Button variant="outline" size="sm">
+          Sign In
+        </Button>
+      </SignInButton>
     );
   }
 
+  if (isConnected && address) {
+    return <WalletBadge address={address} />;
+  }
+
   return (
-    <>
-      <SignedOut>
-        <SignInButton mode="modal">
-          <Button variant="outline" size="sm">
-            Sign In
+    <div className="flex gap-2">
+      {walletConnectors.length === 0 ? (
+        <Button variant="outline" size="sm" disabled>
+          Wallet connector unavailable
+        </Button>
+      ) : (
+        walletConnectors.map((connector) => (
+          <Button
+            key={connector.uid}
+            variant="outline"
+            size="sm"
+            onClick={() => connect({ connector })}
+          >
+            Connect Wallet
           </Button>
-        </SignInButton>
-      </SignedOut>
-      <SignedIn>
-        <div className="flex gap-2">
-          {walletConnectors.length === 0 ? (
-            <Button variant="outline" size="sm" disabled>
-              Wallet connector unavailable
-            </Button>
-          ) : (
-            walletConnectors.map((connector) => (
-              <Button
-                key={connector.uid}
-                variant="outline"
-                size="sm"
-                onClick={() => connect({ connector })}
-              >
-                Connect Wallet
-              </Button>
-            ))
-          )}
-        </div>
-      </SignedIn>
-    </>
+        ))
+      )}
+    </div>
   );
 }
