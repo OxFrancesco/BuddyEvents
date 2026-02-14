@@ -55,8 +55,15 @@ export async function callTelegramApi<T>(
     throw new Error(`Telegram API HTTP ${response.status}: ${body}`);
   }
 
-  const json = (await response.json()) as TelegramApiResult<T>;
-  if (!json.ok) throw new Error(`Telegram API method ${method} failed`);
+  const json = (await response.json()) as TelegramApiResult<T> & {
+    error_code?: number;
+    description?: string;
+  };
+  if (!json.ok) {
+    throw new Error(
+      `Telegram API ${method} failed: ${json.error_code ?? "?"} ${json.description ?? "unknown"}`,
+    );
+  }
   return json.result;
 }
 

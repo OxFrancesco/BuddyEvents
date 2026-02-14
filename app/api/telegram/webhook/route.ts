@@ -41,6 +41,11 @@ function getConvexServiceToken() {
   return token;
 }
 
+function parseCommand(text: string): string {
+  const firstToken = text.split(/\s+/)[0] ?? "";
+  return firstToken.split("@")[0].toLowerCase();
+}
+
 export async function POST(request: Request) {
   const secretHeader = request.headers.get("x-telegram-bot-api-secret-token");
   if (!verifyTelegramWebhookSecret(secretHeader)) {
@@ -56,18 +61,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  const command = parseCommand(text);
+
   try {
-    if (text === "/start") {
+    if (command === "/start") {
+      console.log("[telegram/webhook] /start from chat", chatId);
       await sendTelegramMessage({
         chat_id: chatId,
-        text:
-          "Welcome to BuddyEvents PI Agent.\nSend /help for commands and tips.",
+        text: "Welcome to BuddyEvents PI Agent.\nSend /help for commands and tips.",
         reply_markup: buildMiniAppKeyboard(),
       });
       return NextResponse.json({ ok: true });
     }
 
-    if (text === "/help") {
+    if (command === "/help") {
       await sendTelegramMessage({
         chat_id: chatId,
         text: HELP_MESSAGE,
@@ -101,17 +108,17 @@ export async function POST(request: Request) {
       reply_markup: buildMiniAppKeyboard(),
     });
   } catch (error) {
-    console.error("[telegram/webhook] Error processing update:", error);
+    const errMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error("[telegram/webhook] Failed for chat", chatId, "command", command, "error:", errMsg);
     try {
       await sendTelegramMessage({
         chat_id: chatId,
-        text: `⚠️ Something went wrong. Please try again later.`,
+        text: `⚠️ Something went wrong: ${errMsg.slice(0, 200)}`,
       });
-    } catch {
-      // Best-effort reply failed — still acknowledge the update to Telegram.
+    } catch (replyErr) {
+      console.error("[telegram/webhook] Reply-with-error also failed:", replyErr);
     }
   }
 
-  // Always return 200 so Telegram does not retry the same update.
   return NextResponse.json({ ok: true });
 }
