@@ -16,6 +16,19 @@ type TelegramUpdate = {
   };
 };
 
+const HELP_MESSAGE = [
+  "BuddyEvents PI Agent Commands:",
+  "- /events list active events",
+  "- /tickets list your tickets",
+  "- /wallet connect or fetch wallet",
+  "- /buy <eventId> purchase a ticket",
+  "- /qr <ticketId> generate a QR token",
+  "",
+  "Tips:",
+  "- Use /events to get event IDs.",
+  "- Open the Mini App for richer flows.",
+].join("\n");
+
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl) throw new Error("NEXT_PUBLIC_CONVEX_URL is not set");
@@ -29,26 +42,35 @@ function getConvexServiceToken() {
 }
 
 export async function POST(request: Request) {
+  const secretHeader = request.headers.get("x-telegram-bot-api-secret-token");
+  if (!verifyTelegramWebhookSecret(secretHeader)) {
+    return NextResponse.json({ error: "Invalid webhook secret" }, { status: 401 });
+  }
+
+  const update = (await request.json()) as TelegramUpdate;
+  const text = update.message?.text?.trim();
+  const chatId = update.message?.chat?.id;
+  const telegramUserId = update.message?.from?.id;
+
+  if (!text || !chatId) {
+    return NextResponse.json({ ok: true });
+  }
+
   try {
-    const secretHeader = request.headers.get("x-telegram-bot-api-secret-token");
-    if (!verifyTelegramWebhookSecret(secretHeader)) {
-      return NextResponse.json({ error: "Invalid webhook secret" }, { status: 401 });
-    }
-
-    const update = (await request.json()) as TelegramUpdate;
-    const text = update.message?.text?.trim();
-    const chatId = update.message?.chat?.id;
-    const telegramUserId = update.message?.from?.id;
-
-    if (!text || !chatId) {
-      return NextResponse.json({ ok: true });
-    }
-
     if (text === "/start") {
       await sendTelegramMessage({
         chat_id: chatId,
         text:
-          "Welcome to BuddyEvents PI Agent.\nUse /events, /tickets, /buy <eventId>, /wallet, /qr <ticketId>.",
+          "Welcome to BuddyEvents PI Agent.\nSend /help for commands and tips.",
+        reply_markup: buildMiniAppKeyboard(),
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (text === "/help") {
+      await sendTelegramMessage({
+        chat_id: chatId,
+        text: HELP_MESSAGE,
         reply_markup: buildMiniAppKeyboard(),
       });
       return NextResponse.json({ ok: true });
@@ -78,12 +100,18 @@ export async function POST(request: Request) {
       text: `${result.ok ? "OK" : "ERROR"}: ${result.message}${details}`,
       reply_markup: buildMiniAppKeyboard(),
     });
-
-    return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Webhook failed" },
-      { status: 500 },
-    );
+    console.error("[telegram/webhook] Error processing update:", error);
+    try {
+      await sendTelegramMessage({
+        chat_id: chatId,
+        text: `⚠️ Something went wrong. Please try again later.`,
+      });
+    } catch {
+      // Best-effort reply failed — still acknowledge the update to Telegram.
+    }
   }
+
+  // Always return 200 so Telegram does not retry the same update.
+  return NextResponse.json({ ok: true });
 }

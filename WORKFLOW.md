@@ -404,3 +404,101 @@ Use `transferTokens(...)` and verify:
 - For reliable end-to-end buys, ensure wallet has:
   - Testnet MON (gas)
   - Testnet USDC (payment)
+
+---
+
+## 12) Telegram PI Bot Go-Live
+
+This section brings `/api/telegram/webhook` and `/telegram` to operational readiness.
+
+### 12.1 Required env
+
+In `.env.local`, set:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `NEXT_PUBLIC_APP_URL` (public HTTPS domain, no localhost for production webhook)
+- `NEXT_PUBLIC_TELEGRAM_MINIAPP_URL` (typically `${NEXT_PUBLIC_APP_URL}/telegram`)
+- `CONVEX_SERVICE_TOKEN`
+- `NEXT_PUBLIC_CONVEX_URL`
+- `CLERK_SECRET_KEY`
+- `CIRCLE_API_KEY`
+- `CIRCLE_ENTITY_SECRET_CIPHERTEXT`
+- `CIRCLE_WALLET_SET_ID` (required for wallet creation/buy)
+
+### 12.2 Start app
+
+```bash
+bun run dev
+```
+
+Expected:
+- Next route `/api/telegram/webhook` is reachable from your public domain.
+- Route `/telegram` loads in browser (and in Telegram WebApp context).
+
+### 12.3 Register Telegram webhook
+
+From repo root:
+
+```bash
+./scripts/telegram/set-webhook.sh
+./scripts/telegram/set-commands.sh
+./scripts/telegram/get-webhook.sh
+```
+
+Expected from `get-webhook.sh`:
+- `url` equals `https://<your-domain>/api/telegram/webhook`
+- `pending_update_count` is low/zero
+- `last_error_message` is empty
+
+To remove webhook:
+
+```bash
+./scripts/telegram/delete-webhook.sh
+```
+
+### 12.4 Smoke test bot commands
+
+In Telegram chat with your bot:
+
+1. Send `/start`
+2. Send `/events`
+3. Send `/tickets`
+
+Expected:
+- Bot replies with `OK:` or `ERROR:` response envelope.
+- `/start` message includes Mini App button when `NEXT_PUBLIC_TELEGRAM_MINIAPP_URL` is set.
+
+### 12.5 Smoke test Mini App auth + PI actions
+
+1. Open Mini App from the bot button
+2. Verify auth status becomes `Signed in`
+3. Run `Find Events`
+4. Run `Connect Circle Wallet`
+5. Run `Find Tickets`
+
+Expected:
+- `Signed in` indicates `/api/telegram/auth/start` succeeded.
+- Wallet card shows an address after connect.
+- Agent Output shows JSON result per action.
+
+### 12.6 QR and buy flow verification
+
+1. Create or pick an existing event ID
+2. Run buy from command box: `/buy <eventId>`
+3. Copy resulting ticket ID and run `/qr <ticketId>` or QR panel input
+
+Expected:
+- Buy response contains `txHash`
+- QR token is generated and renders as QR code
+
+### 12.7 Troubleshooting quick map
+
+- `401 Invalid webhook secret`:
+  - `TELEGRAM_WEBHOOK_SECRET` does not match `secret_token` used in webhook setup.
+- `TELEGRAM_BOT_TOKEN missing on server`:
+  - token missing in runtime env.
+- `No linked wallet. Connect wallet first.`:
+  - run wallet connect flow first.
+- `CIRCLE_WALLET_SET_ID is not configured`:
+  - Circle wallet set env is missing.

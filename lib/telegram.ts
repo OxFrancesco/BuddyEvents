@@ -19,6 +19,11 @@ type TelegramSendMessageArgs = {
   };
 };
 
+type TelegramBotCommand = {
+  command: string;
+  description: string;
+};
+
 function getBotToken() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not configured");
@@ -69,6 +74,10 @@ export async function editTelegramMessageText(args: {
     "editMessageText",
     args as Record<string, unknown>,
   );
+}
+
+export async function setTelegramCommands(commands: TelegramBotCommand[]) {
+  return await callTelegramApi("setMyCommands", { commands });
 }
 
 export function verifyTelegramWebhookSecret(headerValue: string | null) {
