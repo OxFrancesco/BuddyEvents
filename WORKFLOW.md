@@ -7,7 +7,8 @@ It validates all key features:
 - Convex backend (schema + CRUD)
 - Next.js frontend flows
 - x402 dynamic ticket payments on Monad
-- Go CLI agent flows (Pi-compatible)
+- Effect TypeScript CLI agent flows (Pi-compatible)
+- Durable workflow worker + reconciliation
 - Circle wallet integration paths
 
 ---
@@ -15,7 +16,6 @@ It validates all key features:
 ## 0) Prerequisites
 
 - Bun installed
-- Go installed
 - Foundry installed (`forge`, `cast`)
 - A Convex deployment URL
 - Monad testnet wallet + funds
@@ -40,12 +40,12 @@ Set at least:
 
 ```bash
 bun install
-cd cli && go mod tidy && go build -o buddyevents . && cd ..
+bun run test
 ```
 
 Expected:
 - Bun install completes
-- CLI binary builds with no errors
+- Vitest suite passes
 
 ---
 
@@ -56,17 +56,19 @@ Run these before runtime tests:
 ```bash
 bun run lint
 npx tsc --noEmit --skipLibCheck
+bun run test
 bun run build
-cd cli && go build ./... && cd ..
+bun run cli -- --help >/dev/null
 cd contracts && forge test && cd ..
 ```
 
 Expected:
 - Lint: clean
 - TS typecheck: clean
+- Vitest: clean
 - Next build: success
-- Go build: success
-- Forge tests: `10 passed`
+- CLI help renders
+- Forge tests: `15 passed`
 
 ---
 
@@ -103,12 +105,11 @@ forge script script/Deploy.s.sol:DeployScript \
 If using the BuddyEvents CLI wallet instead of a standalone key:
 
 ```bash
-cd cli
-./buddyevents wallet setup
-./buddyevents wallet fund
-./buddyevents wallet balance
-export PRIVATE_KEY=$(jq -r '.private_key' ~/.buddyevents/config.json)
-cd ../contracts
+bun run cli -- wallet setup
+bun run cli -- wallet fund
+bun run cli -- wallet balance
+export PRIVATE_KEY=$(jq -r '.privateKey' ~/.buddyevents/config.json)
+cd contracts
 forge script script/Deploy.s.sol:DeployScript \
   --rpc-url https://testnet-rpc.monad.xyz \
   --private-key "$PRIVATE_KEY" \
@@ -117,7 +118,7 @@ forge script script/Deploy.s.sol:DeployScript \
 
 Copy deployed address into:
 - `.env.local` as `NEXT_PUBLIC_BUDDY_EVENTS_CONTRACT`
-- `~/.buddyevents/config.json` as `contract_address`
+- `~/.buddyevents/config.json` as `contractAddress`
 
 ### 3.3 Verify deployed contract (API-first)
 
@@ -182,6 +183,12 @@ From repo root:
 
 ```bash
 bun run dev
+```
+
+In a second terminal, run the durable workflow worker:
+
+```bash
+bun run worker
 ```
 
 Open:
@@ -315,44 +322,43 @@ After successful paid purchase:
 
 All commands are non-interactive and can be run by Pi via Bash.
 
-From `cli/`:
+From repo root:
 
 ```bash
-./buddyevents wallet setup
-./buddyevents wallet fund
-./buddyevents wallet balance
-./buddyevents agent register --name "AgentA" --owner 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-./buddyevents events list
+bun run cli -- wallet setup
+bun run cli -- wallet fund
+bun run cli -- wallet balance
+bun run cli -- agent register --name "AgentA" --owner 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bun run cli -- events list
+bun run cli -- workflow list
 ```
 
 ### 8.1 x402 CLI buy (critical)
 
 ```bash
-./buddyevents tickets buy --event-id REPLACE_EVENT_ID
+bun run cli -- tickets buy --event-id REPLACE_EVENT_ID
 ```
 
 Expected:
 - CLI performs x402 402->pay->retry flow
-- Outputs:
-  - `Ticket purchased!`
-  - `Ticket ID: ...`
-  - `Settlement Tx: 0x...`
+- Output includes a durable `workflowId`
+- Ticket and QR metadata are returned once fulfillment completes
 
 ### 8.2 Direct on-chain buy path
 
 ```bash
-./buddyevents tickets buy --on-chain-id 0
+bun run cli -- tickets buy --event-id REPLACE_EVENT_ID --on-chain-id 0
 ```
 
 Expected:
-- `approve` tx sent
 - `buyTicket` tx sent
-- Success output
+- `/api/purchases/confirm` is invoked automatically
+- Output includes `workflowId` and eventual ticket sync metadata
 
 ### 8.3 Resale flow
 
 ```bash
-./buddyevents tickets sell --token-id 0 --price 15000
+bun run cli -- tickets sell --token-id 0 --price 15000
 ```
 
 Expected:
@@ -385,8 +391,10 @@ Use `transferTokens(...)` and verify:
 
 - [ ] `bun run lint` passes
 - [ ] `npx tsc --noEmit --skipLibCheck` passes
+- [ ] `bun run test` passes
 - [ ] `bun run build` passes
-- [ ] `cd cli && go build ./...` passes
+- [ ] `bun run cli -- --help >/dev/null` passes
+- [ ] `bun run worker` can claim and execute workflows
 - [ ] `cd contracts && forge test` passes
 - [ ] Paid x402 purchase returns real settlement tx hash
 - [ ] Free event buy bypasses payment correctly

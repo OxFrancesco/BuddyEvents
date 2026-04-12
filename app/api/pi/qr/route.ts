@@ -3,6 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { auth } from "@clerk/nextjs/server";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { userOwnsAddress } from "../../../../lib/walletOwnership";
 
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -14,11 +15,6 @@ function getConvexServiceToken() {
   const token = process.env.CONVEX_SERVICE_TOKEN;
   if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
   return token;
-}
-
-function sameAddress(a?: string, b?: string) {
-  if (!a || !b) return false;
-  return a.toLowerCase() === b.toLowerCase();
 }
 
 export async function GET(request: Request) {
@@ -52,13 +48,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
-    const linkedWallet = await convex.query(api.wallets.getByUser, {
-      userId: user._id,
-      serviceToken,
-    });
     if (
-      !sameAddress(user.walletAddress ?? undefined, ticket.buyerAddress) &&
-      !sameAddress(linkedWallet?.walletAddress, ticket.buyerAddress)
+      !(await userOwnsAddress({
+        convex,
+        user,
+        address: ticket.buyerAddress,
+        serviceToken,
+      }))
     ) {
       return NextResponse.json(
         { error: "You do not own this ticket" },

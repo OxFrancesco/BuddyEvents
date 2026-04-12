@@ -3,6 +3,9 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import { executePiAction } from "../../../../lib/piAgent";
 import type { PiExecutionResult, PiIntent } from "../../../../lib/piAgent";
+import { startWorkflow } from "../../../../lib/effect/workflows";
+import { getChainLabel, normalizeSupportedChainKey } from "../../../../lib/chains";
+import { resolveIdempotencyKey } from "../../../../lib/idempotency";
 import {
   sendTelegramMessage,
   verifyTelegramWebhookSecret,
@@ -206,7 +209,11 @@ function formatGenericResponse(result: PiExecutionResult): string {
   if (result.intent === "connect_wallet") {
     const data = asRecord(result.data);
     const walletAddress = data?.walletAddress;
-    const blockchain = data?.blockchain;
+    const chainKey =
+      typeof data?.chainKey === "string"
+        ? normalizeSupportedChainKey(data.chainKey)
+        : undefined;
+    const blockchain = chainKey ? getChainLabel(chainKey) : data?.blockchain;
     return [
       "✅ Your wallet is connected.",
       walletAddress ? `Address: \`${String(walletAddress)}\`` : null,
@@ -302,6 +309,30 @@ function isPiIntent(value: unknown): value is PiIntent {
     value === "buy_ticket" ||
     value === "create_event" ||
     value === "get_event_qr"
+  );
+}
+
+function commandToIntent(command: string): PiIntent | undefined {
+  switch (command) {
+    case "/wallet":
+      return "connect_wallet";
+    case "/buy":
+      return "buy_ticket";
+    case "/create":
+      return "create_event";
+    case "/qr":
+      return "get_event_qr";
+    default:
+      return undefined;
+  }
+}
+
+function isMutatingIntent(intent: PiIntent | undefined) {
+  return (
+    intent === "connect_wallet" ||
+    intent === "buy_ticket" ||
+    intent === "create_event" ||
+    intent === "get_event_qr"
   );
 }
 
@@ -657,6 +688,42 @@ export async function POST(request: Request) {
           serviceToken,
         })
       : null;
+
+    const effectiveIntent = routedIntent ?? commandToIntent(command);
+    if (isMutatingIntent(effectiveIntent)) {
+      const idempotencyKey = resolveIdempotencyKey({
+        explicitKey: undefined,
+        fallbackNamespace: "telegram-command",
+        fallbackParts: [
+          String(chatId),
+          String(telegramUserId ?? "anonymous"),
+          effectiveIntent,
+          text,
+        ],
+      });
+      const workflow = await startWorkflow({
+        workflowName: "telegram_command",
+        idempotencyKey,
+        source: "telegram_webhook",
+        actorUserId: user?._id,
+        payload: {
+          chatId,
+          rawInput: text,
+          userId: user?._id,
+          intent: effectiveIntent,
+          args: routedArgs,
+        },
+      });
+
+      const rows: TelegramInlineKeyboardButton[][] = [];
+      if (miniAppBtn) rows.push([miniAppBtn]);
+      await sendTelegramMessage({
+        chat_id: chatId,
+        text: "⏳ Processing your request. I’ll send the result as soon as the workflow finishes.",
+        reply_markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
+      });
+      return NextResponse.json({ ok: true, workflowId: workflow._id });
+    }
 
     const result = await executePiAction({
       source: "telegram_bot",

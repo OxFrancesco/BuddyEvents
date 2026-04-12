@@ -6,6 +6,10 @@ import { ConvexHttpClient } from "convex/browser";
 import { auth } from "@clerk/nextjs/server";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { normalizeSupportedChainKey } from "../../../lib/chains";
+import { parseJson, startWorkflowAndRun } from "../../../lib/effect/workflows";
+import { resolveIdempotencyKey } from "../../../lib/idempotency";
+import { userOwnsAddress } from "../../../lib/walletOwnership";
 
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -19,11 +23,6 @@ function getConvexServiceToken() {
   const token = process.env.CONVEX_SERVICE_TOKEN;
   if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
   return token;
-}
-
-function isSameAddress(a: string | undefined, b: string | undefined): boolean {
-  if (!a || !b) return false;
-  return a.toLowerCase() === b.toLowerCase();
 }
 
 export async function GET(request: Request) {
@@ -77,7 +76,15 @@ export async function GET(request: Request) {
       if (!caller) {
         return NextResponse.json({ error: "User profile not found" }, { status: 404 });
       }
-      if (caller.role !== "admin" && !isSameAddress(caller.walletAddress, buyer)) {
+      if (
+        caller.role !== "admin" &&
+        !(await userOwnsAddress({
+          convex,
+          user: caller,
+          address: buyer,
+          serviceToken,
+        }))
+      ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
 
@@ -126,21 +133,69 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    const eventId = await convex.mutation(api.events.create, {
-      name: body.name,
-      description: body.description ?? "",
-      startTime: body.startTime,
-      endTime: body.endTime,
-      price: body.price,
-      maxTickets: body.maxTickets,
-      teamId: body.teamId,
-      sponsors: body.sponsors ?? [],
-      location: body.location ?? "",
-      creatorAddress: body.creatorAddress,
-      serviceToken,
+    const idempotencyKey = resolveIdempotencyKey({
+      explicitKey:
+        request.headers.get("Idempotency-Key") ??
+        request.headers.get("idempotency-key") ??
+        undefined,
+      fallbackNamespace: "create-event",
+      fallbackParts: [
+        body.name,
+        String(body.startTime),
+        String(body.endTime),
+        body.teamId,
+        body.creatorAddress,
+        body.chainKey,
+      ],
     });
+    const chainKey = normalizeSupportedChainKey(body.chainKey);
 
-    return NextResponse.json({ eventId }, { status: 201 });
+    const workflow = await startWorkflowAndRun({
+      workflowName: "create_event",
+      idempotencyKey,
+      source: "admin_api",
+      actorUserId: caller._id,
+      payload: {
+        name: body.name,
+        description: body.description ?? "",
+        startTime: body.startTime,
+        endTime: body.endTime,
+        price: body.price,
+        maxTickets: body.maxTickets,
+        chainKey,
+        teamId: body.teamId,
+        sponsors: body.sponsors ?? [],
+        location: body.location ?? "",
+        creatorAddress: body.creatorAddress,
+        creatorUserId: caller._id,
+        chainReference: idempotencyKey,
+      },
+    });
+    const result = parseJson<{
+      eventId: string;
+      onChainEventId: number;
+      txHash: string;
+    }>(workflow.completed?.resultJson);
+
+    if (!result) {
+      return NextResponse.json(
+        {
+          workflowId: workflow.execution._id,
+          status: workflow.completed?.status ?? workflow.execution.status,
+        },
+        { status: 202 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        eventId: result.eventId,
+        workflowId: workflow.execution._id,
+        onChainEventId: result.onChainEventId,
+        txHash: result.txHash,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create event" },

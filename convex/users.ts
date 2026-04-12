@@ -1,11 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireAdmin, requireSignedInUserOrService } from "./lib/auth";
-
-function isSameAddress(a: string | undefined, b: string): boolean {
-  if (!a) return false;
-  return a.toLowerCase() === b.toLowerCase();
-}
+import { resolveUserByAnyWalletAddress, userOwnsAddress } from "./lib/walletOwnership";
 
 const roleValidator = v.union(v.literal("user"), v.literal("admin"));
 
@@ -121,7 +117,7 @@ export const getByWallet = query({
     if (
       caller &&
       caller.role !== "admin" &&
-      !isSameAddress(caller.walletAddress, args.walletAddress)
+      !(await userOwnsAddress(ctx, caller, args.walletAddress))
     ) {
       throw new Error("Forbidden");
     }
@@ -130,6 +126,26 @@ export const getByWallet = query({
       .query("users")
       .withIndex("by_wallet", (q) => q.eq("walletAddress", args.walletAddress))
       .unique();
+  },
+});
+
+export const getByAnyWalletAddress = query({
+  args: {
+    walletAddress: v.string(),
+    serviceToken: v.optional(v.string()),
+  },
+  returns: v.union(userValidator, v.null()),
+  handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (
+      caller &&
+      caller.role !== "admin" &&
+      !(await userOwnsAddress(ctx, caller, args.walletAddress))
+    ) {
+      throw new Error("Forbidden");
+    }
+
+    return await resolveUserByAnyWalletAddress(ctx, args.walletAddress);
   },
 });
 
@@ -275,6 +291,25 @@ export const upsertByClerkId = mutation({
       telegramPhotoUrl: undefined,
       telegramLinkedAt: undefined,
     });
+  },
+});
+
+export const setExternalWalletAddress = mutation({
+  args: {
+    walletAddress: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
+  },
+  returns: v.id("users"),
+  handler: async (ctx, args) => {
+    const caller = await requireSignedInUserOrService(ctx, args.serviceToken);
+    if (!caller) {
+      throw new Error("Authenticated user required");
+    }
+
+    await ctx.db.patch(caller._id, {
+      walletAddress: args.walletAddress,
+    });
+    return caller._id;
   },
 });
 

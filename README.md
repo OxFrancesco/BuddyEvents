@@ -22,7 +22,8 @@ What you can do right now:
 - Manage tickets and QR entry passes (`/tickets`)
 - Run organizer/admin check-ins (`/check-in`, `/admin/checkin`)
 - Use PI agent commands via Telegram and HTTP (`/api/pi/*`, `/api/telegram/*`)
-- Use Go CLI for wallet ops, event discovery, buying, and agent registration (`cli/`)
+- Use the Effect TypeScript CLI for wallet ops, event discovery, buying, reconciliation, and agent registration (`bun run cli -- ...`)
+- Run the durable workflow worker (`bun run worker`)
 
 Core stack:
 - Frontend: Next.js 16 + React 19 + Tailwind + shadcn/ui
@@ -47,9 +48,10 @@ BuddyEvents has two parallel execution paths:
 - Off-chain ticket + QR issuance in Convex after on-chain confirmation
 
 2. Agent flow:
-- Go CLI or Telegram command
+- Effect CLI or Telegram command
 - API endpoints under `/api/*`
 - x402 challenge/settlement for paid HTTP purchases
+- Convex-backed workflow execution journal (`workflowExecutions`, `workflowSteps`, `workflowSignals`)
 - Circle wallet automation for PI workflows (optional)
 - Agent run telemetry in Convex (`agentRuns`)
 
@@ -57,8 +59,8 @@ BuddyEvents has two parallel execution paths:
 
 Main tables in `convex/schema.ts`:
 - `events`: lifecycle (`draft|active|ended|cancelled`), moderation (`pending|approved|rejected`), optional foundation/project assignment, on-chain event linkage.
-- `tickets`: owner, purchase tx hash, status (`active|listed|transferred|refunded`), QR payload, check-in metadata.
-- `ticketQrTokens`: hashed short-lived QR tokens, expiry, revocation.
+- `tickets`: owner, purchase tx hash, durable purchase reference/source, status (`active|listed|transferred|refunded`), QR payload, check-in metadata.
+- `ticketQrTokens`: hashed short-lived QR tokens, active plaintext mirror for rendering, expiry, revocation.
 - `eventCheckins`: immutable check-in records.
 - `teams`: foundation-level organizer groups and wallets.
 - `projects`: optional project grouping under foundations.
@@ -67,6 +69,9 @@ Main tables in `convex/schema.ts`:
 - `agentRuns`: execution logs for PI actions.
 - `wallets`: Circle wallet mapping per user.
 - `sponsors`: sponsor metadata.
+- `workflowExecutions`: durable workflow leases, status, retry state, payload, and results.
+- `workflowSteps`: step-level journal entries with external references.
+- `workflowSignals`: future-proof signal channel for workflow coordination and reconciliation.
 
 ### 3. Authorization and Security Model
 
@@ -106,12 +111,13 @@ Flow:
 2. Ensure Monad testnet chain selected
 3. If paid event: call USDC `approve` first
 4. Call `BuddyEvents.buyTicket(onChainEventId)`
-5. After tx confirmation, call `tickets.recordPurchaseAndIssueQr`
+5. Auto-sync via `POST /api/purchases/confirm`, which starts a durable `ticket_purchase` workflow
+6. Background reconciliation replays the workflow if the browser disappears mid-flight
 
 Result:
-- Ticket stored in Convex
-- `ticketsSold` incremented
-- Tokenized QR issued
+- Ticket stored in Convex exactly once
+- `ticketsSold` incremented exactly once
+- Tokenized QR issued from `ticketQrTokens`
 
 #### B. Agent/API purchase with x402
 Path: `GET /api/events/[id]/buy`
@@ -120,8 +126,8 @@ Behavior:
 - Endpoint is x402-protected (`@x402/core/server`, `ExactEvmScheme`)
 - Price is dynamic per event
 - Payee is dynamic: team wallet if assigned, else fallback `PAY_TO_ADDRESS`
-- Free events skip payment challenge and issue ticket immediately
-- Successful settlement creates ticket + QR in Convex
+- Free events skip payment challenge and enqueue the same durable fulfillment workflow
+- Successful settlement creates ticket + QR in Convex via an idempotent `purchaseReference`
 
 ### 6. Check-in System
 
@@ -150,8 +156,9 @@ There are two check-in paths currently:
   - `/buy <eventId>`
   - `/qr <ticketId>`
   - `/help`
-- Executes via `executePiAction`
-- Replies in chat with result payload
+- Read-only commands execute inline
+- Mutating commands enqueue durable workflows and reply immediately with a processing status
+- Completion and failure messages are sent by workflow steps
 
 #### Telegram Mini App auth
 `POST /api/telegram/auth/start`
@@ -182,6 +189,7 @@ Used by PI endpoints for:
 - wallet connect (`/api/pi/wallet/connect`)
 - balance (`/api/pi/wallet/balance`)
 - buy/create actions through Circle-managed wallet signatures
+- admin event creation through durable `create_event` workflow reconciliation
 
 ### 9. Smart Contract Capabilities
 
@@ -200,7 +208,7 @@ Contract test coverage (`contracts/test/BuddyEvents.t.sol`) includes:
 
 ### 10. CLI Capabilities
 
-Go CLI (`cli/`) commands:
+Effect TypeScript CLI (`tools/cli/main.ts`, invoked with `bun run cli -- ...`) commands:
 - `wallet`
   - `setup`: generate wallet and persist config
   - `fund`: faucet request for MON
@@ -219,6 +227,18 @@ Go CLI (`cli/`) commands:
 - `agent`
   - `register`
   - `info`
+- `workflow`
+  - `list`
+  - `get`
+  - `retry`
+  - `sweep`
+- `reconcile`
+  - `purchases`
+  - `events`
+  - `wallets`
+- `tui`: OpenTUI workflow dashboard
+
+The previous Go implementation is preserved in `legacy/go-cli/` during the migration.
 
 ---
 
@@ -240,9 +260,9 @@ Go CLI (`cli/`) commands:
 - If wallet not on Monad testnet, switch chain.
 - Approve USDC (if paid) and buy.
 
-4. Confirm purchase
-- After on-chain confirmation, click confirm step.
-- Ticket is written to Convex with generated QR token.
+4. Purchase auto-finalizes
+- After on-chain confirmation, the page posts to `/api/purchases/confirm`.
+- Ticket fulfillment runs through the durable workflow engine and auto-heals on retry.
 
 5. Go to `/tickets`
 - View all owned tickets.
@@ -315,13 +335,13 @@ Go CLI (`cli/`) commands:
 
 ### I. CLI-first agent/operator flow
 
-1. `buddyevents wallet setup`
-2. `buddyevents wallet fund`
-3. `buddyevents events list`
-4. `buddyevents tickets buy --event-id <convexId>` (x402)
-5. or `buddyevents tickets buy --on-chain-id <id>` (direct contract)
-6. `buddyevents tickets list`
-7. `buddyevents agent register --name ... --owner ...`
+1. `bun run cli -- wallet setup`
+2. `bun run cli -- wallet fund`
+3. `bun run cli -- events list`
+4. `bun run cli -- tickets buy --event-id <convexId>` (x402)
+5. or `bun run cli -- tickets buy --event-id <convexId> --on-chain-id <id>` (direct contract + durable confirm)
+6. `bun run cli -- tickets list`
+7. `bun run cli -- agent register --name ... --owner ...`
 
 ---
 
@@ -338,9 +358,13 @@ Go CLI (`cli/`) commands:
 - `POST /api/agent` (owner/admin)
 - `POST /api/tickets/scan` (signed-in organizer/admin)
 - `POST /api/checkin/validate` (admin)
+- `POST /api/purchases/confirm`
 
 ### x402 purchase endpoint
 - `GET /api/events/[id]/buy`
+
+### Workflow introspection
+- `GET /api/workflows/[id]`
 
 ### PI + Telegram endpoints
 - `POST /api/pi/execute`
@@ -376,6 +400,8 @@ Agent/CLI:
 - Event discovery and management
 - Ticket buy (direct and x402)
 - Agent registration and lookup
+- Workflow inspection and retry
+- Purchase/event/wallet reconciliation
 
 On-chain:
 - Event registry
@@ -391,7 +417,7 @@ On-chain:
 
 ```bash
 bun install
-cd cli && go build -o buddyevents . && cd ..
+bun run test
 ```
 
 ### 2. Configure environment
@@ -435,7 +461,7 @@ forge script script/Deploy.s.sol:DeployScript \
 
 Set deployed address in:
 - `.env.local` -> `NEXT_PUBLIC_BUDDY_EVENTS_CONTRACT`
-- `~/.buddyevents/config.json` -> `contract_address` (for CLI usage)
+- `~/.buddyevents/config.json` -> `contractAddress` (for CLI usage)
 
 ### 5. Run app
 
@@ -443,7 +469,13 @@ Set deployed address in:
 bun run dev
 ```
 
-### 6. (Optional) Register Telegram webhook
+### 6. Run the workflow worker
+
+```bash
+bun run worker
+```
+
+### 7. (Optional) Register Telegram webhook
 
 ```bash
 ./scripts/telegram/set-webhook.sh
@@ -455,7 +487,8 @@ bun run dev
 ## Known Implementation Notes
 
 - Secondary-market UI is not exposed in the web frontend yet; contract + CLI support exists.
-- Web purchase flow currently records purchase after on-chain tx confirmation via explicit client step.
+- Web purchase flow now auto-syncs after on-chain confirmation through `/api/purchases/confirm`.
+- Durable retries require the worker process to be running in non-request execution paths.
 - Two check-in paths coexist:
   - legacy organizer scan (`tickets.scanForCheckIn`)
   - tokenized admin validation (`qr.validateAndCheckIn`)
@@ -469,9 +502,11 @@ app/                 Next.js pages + API routes
 components/          UI components/providers
 convex/              Backend functions + schema + auth guards
 contracts/           Solidity contract + tests + deploy scripts
-cli/                 Go CLI for agents/operators
+legacy/go-cli/       Preserved Go CLI during the migration window
 docs/                Additional runbooks and references
 lib/                 Chain, x402, Telegram, PI, Circle helpers
+tools/cli/           Effect CLI entrypoint and config helpers
+tools/worker/        Durable workflow worker
 scripts/telegram/    Telegram webhook helper scripts
 ```
 

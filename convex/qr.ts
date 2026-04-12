@@ -2,6 +2,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { requireSignedInUserOrService } from "./lib/auth";
+import { userOwnsAddress } from "./lib/walletOwnership";
 
 async function sha256Hex(input: string) {
   const bytes = new TextEncoder().encode(input);
@@ -28,6 +29,7 @@ async function issueQrToken(
     ticketId: args.ticketId,
     eventId: args.eventId,
     userId: args.userId,
+    token,
     tokenHash,
     expiresAt: args.expiresAt,
     issuedAt: now,
@@ -36,23 +38,12 @@ async function issueQrToken(
   return { ticketQrTokenId, token, tokenHash };
 }
 
-function isSameAddress(a: string | undefined, b: string): boolean {
-  if (!a) return false;
-  return a.toLowerCase() === b.toLowerCase();
-}
-
 async function userOwnsTicket(
   ctx: MutationCtx,
   user: Doc<"users">,
   ticket: Doc<"tickets">,
 ): Promise<boolean> {
-  if (isSameAddress(user.walletAddress, ticket.buyerAddress)) return true;
-
-  const wallets = await ctx.db
-    .query("wallets")
-    .withIndex("by_user", (q) => q.eq("userId", user._id))
-    .collect();
-  return wallets.some((wallet) => isSameAddress(wallet.walletAddress, ticket.buyerAddress));
+  return await userOwnsAddress(ctx, user, ticket.buyerAddress);
 }
 
 const qrIssueResultValidator = v.object({
@@ -106,6 +97,10 @@ export const issueForTicket = mutation({
       expiresAt: expiry,
     });
 
+    await ctx.db.patch(args.ticketId, {
+      qrCode: result.token,
+    });
+
     return {
       ticketQrTokenId: result.ticketQrTokenId,
       token: result.token,
@@ -131,6 +126,7 @@ export const getActiveByTicket = query({
       ticketId: v.id("tickets"),
       eventId: v.id("events"),
       userId: v.optional(v.id("users")),
+      token: v.optional(v.string()),
       tokenHash: v.string(),
       expiresAt: v.number(),
       revokedAt: v.optional(v.number()),
@@ -148,6 +144,44 @@ export const getActiveByTicket = query({
       all.find((token) => token.revokedAt === undefined && token.expiresAt > now) ??
       null
     );
+  },
+});
+
+export const listActiveByTickets = query({
+  args: {
+    ticketIds: v.array(v.id("tickets")),
+  },
+  returns: v.array(
+    v.object({
+      ticketId: v.id("tickets"),
+      token: v.optional(v.string()),
+      expiresAt: v.number(),
+      issuedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const results = await Promise.all(
+      args.ticketIds.map(async (ticketId) => {
+        const tokens = await ctx.db
+          .query("ticketQrTokens")
+          .withIndex("by_ticket", (q) => q.eq("ticketId", ticketId))
+          .collect();
+        const active = tokens
+          .filter((token) => token.revokedAt === undefined && token.expiresAt > now)
+          .sort((a, b) => b.issuedAt - a.issuedAt)[0];
+        return active
+          ? {
+              ticketId,
+              token: active.token,
+              expiresAt: active.expiresAt,
+              issuedAt: active.issuedAt,
+            }
+          : null;
+      }),
+    );
+
+    return results.filter((value): value is NonNullable<typeof value> => value !== null);
   },
 });
 

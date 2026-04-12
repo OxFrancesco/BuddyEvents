@@ -1,11 +1,10 @@
 /// app/tickets/page.tsx — My tickets page
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { useUser } from "@clerk/nextjs";
-import { useAccount } from "wagmi";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -14,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { TicketQRCode } from "@/components/TicketQRCode";
 import { Header } from "@/components/Header";
+import { getChainLabel } from "@/lib/chains";
 
 type Ticket = {
   _id: Id<"tickets">;
@@ -23,19 +23,23 @@ type Ticket = {
   purchasePrice: number;
   txHash: string;
   qrCode: string;
+  chainKey: "monadTestnet" | "baseMainnet";
   checkedInAt?: number;
   checkedInBy?: string;
   status: "active" | "listed" | "transferred" | "refunded";
 };
 
+const emptySubscribe = () => () => {};
+
 export default function TicketsPage() {
-  const { address, isConnected } = useAccount();
-  const { isSignedIn } = useUser();
-  const upsertMe = useMutation(api.users.upsertMe);
-  const tickets = useQuery(
-    api.tickets.listByBuyer,
-    address && isSignedIn ? { buyerAddress: address } : "skip",
+  const { isLoaded, isSignedIn } = useUser();
+  const isHydrated = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false,
   );
+  const isSessionReady = isHydrated && isLoaded;
+  const tickets = useQuery(api.tickets.listMine, isSessionReady && isSignedIn ? {} : "skip");
   const eventIds = useMemo(
     () =>
       tickets
@@ -47,15 +51,23 @@ export default function TicketsPage() {
     api.events.getMany,
     eventIds.length > 0 ? { ids: eventIds } : "skip",
   );
+  const activeQrTokens = useQuery(
+    api.qr.listActiveByTickets,
+    tickets && tickets.length > 0
+      ? { ticketIds: tickets.map((ticket) => ticket._id) }
+      : "skip",
+  );
   const eventsById = useMemo(
     () => new Map((events ?? []).map((event) => [event._id, event])),
     [events],
   );
-
-  useEffect(() => {
-    if (!isSignedIn) return;
-    void upsertMe({ walletAddress: address ?? undefined });
-  }, [address, isSignedIn, upsertMe]);
+  const activeQrByTicketId = useMemo(
+    () =>
+      new Map(
+        (activeQrTokens ?? []).map((qr) => [qr.ticketId, qr]),
+      ),
+    [activeQrTokens],
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -64,18 +76,17 @@ export default function TicketsPage() {
       <main className="container mx-auto px-4 py-8">
         <h1 className="text-3xl font-black uppercase tracking-wide mb-2">My Tickets</h1>
         <p className="text-muted-foreground mb-8 text-sm">
-          Your purchased event tickets (NFTs on Monad)
+          Your purchased event tickets across Monad Testnet and Base Mainnet
         </p>
 
-        {!isConnected ? (
-          <div className="text-center py-24 space-y-4 border-2 border-dashed border-foreground/30">
-            <p className="text-muted-foreground">Sign in and connect your wallet to see your tickets</p>
-            <ConnectWallet />
+        {!isSessionReady ? (
+          <div className="text-center py-24 text-muted-foreground border-2 border-dashed border-foreground/30">
+            Loading session...
           </div>
         ) : !isSignedIn ? (
           <div className="text-center py-24 space-y-4 border-2 border-dashed border-foreground/30">
-            <p className="text-muted-foreground">Sign in with Clerk to load your tickets.</p>
-            <Button disabled>Sign-in required</Button>
+            <p className="text-muted-foreground">Sign in to see your tickets</p>
+            <ConnectWallet />
           </div>
         ) : tickets === undefined ? (
           <div className="text-center py-24 text-muted-foreground border-2 border-dashed border-foreground/30">
@@ -95,6 +106,7 @@ export default function TicketsPage() {
                 key={ticket._id}
                 ticket={ticket}
                 event={eventsById.get(ticket.eventId)}
+                activeQrToken={activeQrByTicketId.get(ticket._id)?.token}
               />
             ))}
           </div>
@@ -118,10 +130,14 @@ function getTicketBadgeVariant(status: Ticket["status"]) {
 function TicketCard({
   ticket,
   event,
+  activeQrToken,
 }: {
   ticket: Ticket;
   event: Doc<"events"> | undefined;
+  activeQrToken?: string;
 }) {
+  const qrValue = activeQrToken ?? ticket.qrCode;
+
   return (
     <Card>
       <CardHeader>
@@ -129,9 +145,12 @@ function TicketCard({
           <CardTitle className="text-base">
             {event?.name ?? "Loading..."}
           </CardTitle>
-          <Badge variant={getTicketBadgeVariant(ticket.status)}>
-            {ticket.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">{getChainLabel(ticket.chainKey)}</Badge>
+            <Badge variant={getTicketBadgeVariant(ticket.status)}>
+              {ticket.status}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
@@ -176,10 +195,10 @@ function TicketCard({
         <div className="space-y-2 pt-1">
           <p className="text-muted-foreground text-xs uppercase tracking-wider">Ticket QR</p>
           <div className="flex justify-center">
-            <TicketQRCode value={ticket.qrCode} />
+            <TicketQRCode value={qrValue} />
           </div>
           <p className="font-mono text-[10px] break-all text-muted-foreground">
-            {ticket.qrCode}
+            {qrValue}
           </p>
         </div>
 

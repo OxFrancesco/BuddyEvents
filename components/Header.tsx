@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { MonadFaucetButton } from "@/components/MonadFaucetButton";
-import { SignedIn } from "@clerk/nextjs";
 
 export function Header() {
   return (
@@ -17,9 +16,14 @@ export function Header() {
           <span className="text-xl font-black uppercase tracking-widest">
             BuddyEvents
           </span>
-          <Badge variant="outline" className="text-[10px]">
-            Monad
-          </Badge>
+          <div className="hidden items-center gap-1 sm:flex">
+            <Badge variant="outline" className="text-[10px]">
+              Monad Testnet
+            </Badge>
+            <Badge variant="outline" className="text-[10px]">
+              Base Mainnet
+            </Badge>
+          </div>
         </Link>
         <nav className="flex items-center gap-2">
           <Link href="/events">

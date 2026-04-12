@@ -23,7 +23,7 @@ export default function Home() {
           <AnimatedLogo size={220} />
         </div>
         <Badge className="mb-6" variant="secondary">
-          Powered by x402 + Monad
+          Powered by x402 on Monad Testnet and Base Mainnet
         </Badge>
         <h1 className="text-5xl font-black uppercase tracking-tight mb-6">
           Event Ticketing for
@@ -32,7 +32,7 @@ export default function Home() {
         </h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
           Buy, sell, create and manage event tickets with AI agents.
-          NFT tickets on Monad. Instant USDC payments via x402.
+          NFT tickets on Monad Testnet and Base Mainnet. Instant USDC payments via x402.
           Agent-to-agent. Agent-to-human. Zero friction.
         </p>
         <div className="flex gap-4 justify-center">
@@ -57,8 +57,8 @@ export default function Home() {
                 desc: "AI agents pay for tickets autonomously using the x402 HTTP payment protocol. No accounts, no API keys, just USDC.",
               },
               {
-                title: "NFT Tickets on Monad",
-                desc: "Every ticket is an ERC-721 NFT on Monad. 10,000 TPS, sub-second finality, near-zero fees.",
+                title: "NFT Tickets on Supported Chains",
+                desc: "Every ticket is an ERC-721 NFT on the event's selected chain: Monad Testnet or Base Mainnet.",
               },
               {
                 title: "Agent-Native",
@@ -115,10 +115,10 @@ export default function Home() {
       <footer className="border-t-2 border-foreground py-8">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
           <p className="font-bold uppercase tracking-wider">
-            BuddyEvents — Agent-Native Event Ticketing on Monad
+            BuddyEvents — Agent-Native Event Ticketing on Monad Testnet and Base Mainnet
           </p>
           <p className="mt-1 font-mono text-xs">
-            Built for the Monad Hackathon 2026
+            Built for agent-native USDC ticketing across supported EVM chains
           </p>
         </div>
       </footer>

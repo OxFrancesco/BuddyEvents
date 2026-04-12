@@ -1,16 +1,11 @@
 /// app/events/[id]/page.tsx — Event detail + buy ticket page
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { useUser } from "@clerk/nextjs";
-import {
-  useAccount,
-  useSwitchChain,
-  useWriteContract,
-  useWaitForTransactionReceipt,
-} from "wagmi";
+import { useAccount, useSignMessage } from "wagmi";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -19,13 +14,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { Header } from "@/components/Header";
+import { getClerkWeb3WalletAddress } from "@/lib/clerkWeb3";
 import {
-  BUDDY_EVENTS_ADDRESS,
-  BUDDY_EVENTS_ABI,
-  MONAD_USDC_TESTNET,
-  MONAD_TESTNET_CHAIN_ID,
-  ERC20_ABI,
-} from "@/lib/monad";
+  approveHumanTransaction,
+  createHumanApproveTransaction,
+  createHumanBuyTicketTransaction,
+  getHumanTransactionHash,
+  waitForHumanTransaction,
+} from "@/lib/crossmint/client";
+import {
+  getChainLabel,
+  getUsdcAddressForChain,
+} from "@/lib/chains";
+import { getExternalWalletSignerLocator } from "@/lib/crossmint/shared";
+import { sameAddress } from "@/lib/walletOwnership";
 
 function isUserRejectedError(error: unknown): boolean {
   const message =
@@ -56,33 +58,22 @@ export default function EventDetailPage({
     api.teams.get,
     event && event.teamId ? { id: event.teamId } : "skip",
   );
-  const { address, isConnected, chainId } = useAccount();
-  const { switchChainAsync, isPending: isSwitchingChain } = useSwitchChain();
-  const upsertMe = useMutation(api.users.upsertMe);
-  const { isSignedIn } = useUser();
-  const recordPurchase = useMutation(api.tickets.recordPurchaseAndIssueQr);
+  const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
+  const { isSignedIn, user } = useUser();
+  const me = useQuery(api.users.me, {});
+  const humanWallet = useQuery(
+    api.wallets.getByUserAndPurpose,
+    me ? { userId: me._id, purpose: "human_primary" } : "skip",
+  );
   const [txNotice, setTxNotice] = useState<string | null>(null);
-
-  const {
-    writeContractAsync: approveUSDC,
-    data: approveHash,
-  } = useWriteContract();
-  const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
-    hash: approveHash,
-  });
-
-  const {
-    writeContractAsync: buyTicket,
-    data: buyHash,
-  } = useWriteContract();
-  const { isSuccess: buyConfirmed } = useWaitForTransactionReceipt({
-    hash: buyHash,
-  });
-
-  useEffect(() => {
-    if (!isSignedIn) return;
-    void upsertMe({ walletAddress: address ?? undefined });
-  }, [address, isSignedIn, upsertMe]);
+  const [purchaseSyncState, setPurchaseSyncState] = useState<
+    "idle" | "approving" | "buying" | "submitting" | "done" | "error"
+  >("idle");
+  const [purchaseWorkflowId, setPurchaseWorkflowId] = useState<string | null>(null);
+  const [activeTransactionId, setActiveTransactionId] = useState<string | null>(null);
+  const resolvedEventId = event?._id;
+  const resolvedEventPrice = event?.price ?? 0;
 
   if (event === undefined) {
     return (
@@ -102,45 +93,74 @@ export default function EventDetailPage({
   const startDate = new Date(event.startTime);
   const endDate = new Date(event.endTime);
   const spotsLeft = event.maxTickets - event.ticketsSold;
-  const priceInUnits = BigInt(Math.floor(event.price * 1_000_000));
-  const isOnMonadTestnet = chainId === MONAD_TESTNET_CHAIN_ID;
+  const chainLabel = getChainLabel(event.chainKey);
+  const usdcAddress = getUsdcAddressForChain(event.chainKey);
+  const clerkWalletAddress = getClerkWeb3WalletAddress(user);
+  const hasWalletMismatch =
+    !!address &&
+    !!clerkWalletAddress &&
+    !sameAddress(address, clerkWalletAddress);
+  const hasSmartWalletSignerMismatch =
+    !!address &&
+    !!humanWallet?.linkedSignerAddress &&
+    !sameAddress(address, humanWallet.linkedSignerAddress);
 
-  const handleBuyOnChain = async () => {
-    if (!address || !isConnected || !isSignedIn) return;
-    setTxNotice(null);
-    if (!isOnMonadTestnet) {
-      try {
-        await switchChainAsync({ chainId: MONAD_TESTNET_CHAIN_ID });
-      } catch (error) {
-        setTxNotice(toReadableError(error, "Please switch to Monad Testnet to continue."));
+  async function approveAndWaitForHumanTransaction(transaction: {
+    id: string;
+    status: "awaiting-approval" | "pending" | "failed" | "success";
+    approvals?: {
+      pending: Array<{
+        signer: {
+          locator: string;
+        };
+        message: string;
+      }>;
+    };
+  }) {
+    if (!address) {
+      throw new Error("Connect your signer wallet first");
+    }
+
+    if (transaction.status === "awaiting-approval") {
+      const pendingApproval =
+        transaction.approvals?.pending.find(
+          (approval) =>
+            approval.signer.locator.toLowerCase() ===
+            getExternalWalletSignerLocator(address).toLowerCase(),
+        ) ?? transaction.approvals?.pending[0];
+
+      if (!pendingApproval) {
+        throw new Error("Crossmint transaction is awaiting approval, but no signature request was returned.");
       }
+
+      const signature = await signMessageAsync({
+        message: pendingApproval.message,
+      });
+
+      await approveHumanTransaction({
+        transactionId: transaction.id,
+        signerAddress: address,
+        signature,
+      });
+    }
+
+    return await waitForHumanTransaction(transaction.id);
+  }
+
+  const handleBuyWithCrossmint = async () => {
+    if (!address || !isConnected || !isSignedIn || !resolvedEventId) {
       return;
     }
-
-    if (event.price > 0) {
-      try {
-        await approveUSDC({
-          chainId: MONAD_TESTNET_CHAIN_ID,
-          address: MONAD_USDC_TESTNET,
-          abi: ERC20_ABI,
-          functionName: "approve",
-          args: [BUDDY_EVENTS_ADDRESS, priceInUnits],
-        });
-      } catch (error) {
-        setTxNotice(toReadableError(error, "USDC approve failed."));
-      }
+    if (!humanWallet) {
+      setTxNotice("Your Crossmint smart wallet is still provisioning.");
+      return;
     }
-  };
-
-  const handleBuyAfterApprove = async () => {
-    if (!address || !isSignedIn) return;
-    setTxNotice(null);
-    if (!isOnMonadTestnet) {
-      try {
-        await switchChainAsync({ chainId: MONAD_TESTNET_CHAIN_ID });
-      } catch (error) {
-        setTxNotice(toReadableError(error, "Please switch to Monad Testnet to continue."));
-      }
+    if (!user?.primaryEmailAddress?.emailAddress) {
+      setTxNotice("Add a primary email in Clerk before buying with your smart wallet.");
+      return;
+    }
+    if (hasWalletMismatch || hasSmartWalletSignerMismatch) {
+      setTxNotice("Connect the same signer wallet linked to Clerk and Crossmint before buying.");
       return;
     }
     if (event.onChainEventId === undefined) {
@@ -148,31 +168,79 @@ export default function EventDetailPage({
       return;
     }
 
-    try {
-      await buyTicket({
-        chainId: MONAD_TESTNET_CHAIN_ID,
-        address: BUDDY_EVENTS_ADDRESS,
-        abi: BUDDY_EVENTS_ABI,
-        functionName: "buyTicket",
-        args: [BigInt(event.onChainEventId)],
-      });
-    } catch (error) {
-      setTxNotice(toReadableError(error, "Ticket purchase failed."));
-    }
-  };
-
-  const handleRecordPurchase = async () => {
-    if (!address || !buyHash) return;
     setTxNotice(null);
+    setPurchaseWorkflowId(null);
+
     try {
-      await recordPurchase({
-        eventId: event._id,
-        buyerAddress: address,
-        purchasePrice: event.price,
-        txHash: buyHash,
+      if (event.price > 0) {
+        setPurchaseSyncState("approving");
+        const approveResponse = await createHumanApproveTransaction({
+          eventId: resolvedEventId,
+          signerAddress: address,
+        });
+        setActiveTransactionId(approveResponse.transaction.id);
+        const approveCompleted = await approveAndWaitForHumanTransaction(
+          approveResponse.transaction,
+        );
+        if (approveCompleted.transaction.status !== "success") {
+          throw new Error("USDC approval did not complete successfully.");
+        }
+      }
+
+      setPurchaseSyncState("buying");
+      const buyResponse = await createHumanBuyTicketTransaction({
+        eventId: resolvedEventId,
+        signerAddress: address,
       });
+      setActiveTransactionId(buyResponse.transaction.id);
+      const buyCompleted = await approveAndWaitForHumanTransaction(
+        buyResponse.transaction,
+      );
+
+      if (buyCompleted.transaction.status !== "success") {
+        throw new Error("Ticket purchase did not complete successfully.");
+      }
+
+      const txHash = getHumanTransactionHash(buyCompleted.transaction);
+      if (!txHash) {
+        throw new Error("Crossmint purchase completed without an on-chain transaction hash.");
+      }
+
+      setPurchaseSyncState("submitting");
+      const confirmResponse = await fetch("/api/purchases/confirm", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": `crossmint:${resolvedEventId}:${txHash}:${humanWallet.walletAddress}`,
+        },
+        body: JSON.stringify({
+          eventId: resolvedEventId,
+          buyerAddress: humanWallet.walletAddress,
+          purchasePrice: resolvedEventPrice,
+          txHash,
+        }),
+      });
+      const confirmPayload = (await confirmResponse.json()) as {
+        ok?: boolean;
+        workflowId?: string;
+        error?: string;
+      };
+      if (!confirmResponse.ok || confirmPayload.ok === false) {
+        throw new Error(confirmPayload.error ?? "Failed to confirm purchase");
+      }
+
+      setPurchaseWorkflowId(confirmPayload.workflowId ?? null);
+      setPurchaseSyncState("done");
+      setActiveTransactionId(null);
     } catch (error) {
-      setTxNotice(toReadableError(error, "Failed to record purchase."));
+      setPurchaseSyncState("error");
+      setActiveTransactionId(null);
+      setTxNotice(
+        toReadableError(
+          error,
+          "Crossmint purchase failed before the ticket could be recorded.",
+        ),
+      );
     }
   };
 
@@ -192,6 +260,7 @@ export default function EventDetailPage({
                 <Badge variant={event.status === "active" ? "default" : "secondary"}>
                   {event.status}
                 </Badge>
+                <Badge variant="outline">{chainLabel}</Badge>
                 {spotsLeft <= 10 && spotsLeft > 0 && (
                   <Badge variant="destructive">{spotsLeft} spots left!</Badge>
                 )}
@@ -255,41 +324,52 @@ export default function EventDetailPage({
                   <span className="text-muted-foreground uppercase text-xs tracking-wider">Available</span>
                   <span className="font-mono font-bold">{spotsLeft} / {event.maxTickets}</span>
                 </div>
+                <div className="flex justify-between gap-4 text-sm">
+                  <span className="text-muted-foreground uppercase text-xs tracking-wider">Chain</span>
+                  <span className="font-mono text-right">{chainLabel}</span>
+                </div>
+                <div className="flex justify-between gap-4 text-sm">
+                  <span className="text-muted-foreground uppercase text-xs tracking-wider">USDC</span>
+                  <span className="font-mono text-right">
+                    {usdcAddress.slice(0, 6)}...{usdcAddress.slice(-4)}
+                  </span>
+                </div>
 
                 <Separator />
 
-                {!isConnected ? (
+                {!isSignedIn ? (
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">
                       Sign in and connect your wallet to buy tickets
                     </p>
                     <ConnectWallet />
                   </div>
-                ) : !isSignedIn ? (
+                ) : !isConnected ? (
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">
-                      Sign in with Clerk to complete ticket purchases.
+                      Connect your signer wallet to {humanWallet ? "approve smart-wallet transactions." : "provision your Crossmint smart wallet."}
                     </p>
-                    <Button disabled className="w-full">Sign-in required</Button>
+                    <ConnectWallet />
                   </div>
-                ) : !isOnMonadTestnet ? (
+                ) : !humanWallet && !user?.primaryEmailAddress?.emailAddress ? (
                   <div className="space-y-2">
-                    <Button
-                      onClick={async () => {
-                        setTxNotice(null);
-                        try {
-                          await switchChainAsync({ chainId: MONAD_TESTNET_CHAIN_ID });
-                        } catch (error) {
-                          setTxNotice(toReadableError(error, "Please switch to Monad Testnet to continue."));
-                        }
-                      }}
-                      className="w-full"
-                      disabled={isSwitchingChain}
-                    >
-                      {isSwitchingChain ? "Switching..." : "Switch to Monad Testnet"}
-                    </Button>
+                    <Button disabled className="w-full">Primary email required</Button>
                     <p className="text-xs text-muted-foreground text-center font-mono">
-                      Wallet is on a different network.
+                      Add a primary email in Clerk before provisioning your smart wallet.
+                    </p>
+                  </div>
+                ) : hasWalletMismatch || hasSmartWalletSignerMismatch ? (
+                  <div className="space-y-2">
+                    <Button disabled className="w-full">Signer mismatch</Button>
+                    <p className="text-xs text-muted-foreground text-center font-mono">
+                      Connect the same EOA you used for Clerk and your Crossmint wallet.
+                    </p>
+                  </div>
+                ) : !humanWallet ? (
+                  <div className="space-y-2">
+                    <Button disabled className="w-full">Provisioning Smart Wallet...</Button>
+                    <p className="text-xs text-muted-foreground text-center font-mono">
+                      Waiting for Crossmint wallet setup to finish.
                     </p>
                   </div>
                 ) : spotsLeft === 0 ? (
@@ -298,28 +378,50 @@ export default function EventDetailPage({
                   <Button disabled className="w-full">Event Not Active</Button>
                 ) : event.onChainEventId === undefined ? (
                   <Button disabled className="w-full">Not Deployed On-chain</Button>
-                ) : !approveConfirmed && event.price > 0 ? (
-                  <Button onClick={handleBuyOnChain} className="w-full">
-                    {approveHash ? "Approving USDC..." : "Approve & Buy"}
-                  </Button>
-                ) : !buyConfirmed ? (
-                  <Button onClick={handleBuyAfterApprove} className="w-full">
-                    {buyHash ? "Confirming..." : "Buy Ticket"}
-                  </Button>
-                ) : (
+                ) : purchaseSyncState === "approving" ? (
+                  <Button disabled className="w-full">Approving USDC...</Button>
+                ) : purchaseSyncState === "buying" ? (
+                  <Button disabled className="w-full">Buying Ticket...</Button>
+                ) : purchaseSyncState === "submitting" ? (
+                  <Button disabled className="w-full">Finalizing Ticket...</Button>
+                ) : purchaseSyncState === "done" ? (
                   <div className="space-y-2">
-                    <Button onClick={handleRecordPurchase} variant="secondary" className="w-full">
-                      Confirm Purchase
+                    <Button disabled variant="secondary" className="w-full">
+                      Ticket Synced
                     </Button>
                     <p className="text-xs text-center text-primary font-bold">
-                      Ticket purchased on-chain!
+                      Ticket purchased on-chain and recorded.
                     </p>
+                    {purchaseWorkflowId ? (
+                      <p className="text-[10px] text-center text-muted-foreground font-mono">
+                        Workflow: {purchaseWorkflowId}
+                      </p>
+                    ) : null}
                   </div>
+                ) : purchaseSyncState === "error" ? (
+                  <Button onClick={handleBuyWithCrossmint} className="w-full">
+                    Retry Buy Ticket
+                  </Button>
+                ) : (
+                  <Button onClick={handleBuyWithCrossmint} className="w-full">
+                    {event.price > 0 ? "Buy Ticket" : "Claim Ticket"}
+                  </Button>
                 )}
 
                 <p className="text-xs text-muted-foreground text-center font-mono uppercase tracking-wider">
-                  NFT ticket on Monad via USDC
+                  NFT ticket on {chainLabel} via Crossmint smart wallet
                 </p>
+                {humanWallet?.walletAddress ? (
+                  <p className="text-[10px] text-center text-muted-foreground font-mono">
+                    Smart wallet: {humanWallet.walletAddress.slice(0, 6)}...
+                    {humanWallet.walletAddress.slice(-4)}
+                  </p>
+                ) : null}
+                {activeTransactionId ? (
+                  <p className="text-[10px] text-center text-muted-foreground font-mono">
+                    Crossmint tx: {activeTransactionId}
+                  </p>
+                ) : null}
                 {txNotice && (
                   <p
                     className={`text-xs text-center font-mono ${

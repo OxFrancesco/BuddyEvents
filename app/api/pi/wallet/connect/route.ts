@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { api } from "../../../../../convex/_generated/api";
-import { createOrGetCircleWalletForUser } from "../../../../../lib/circle";
+import { ensureAutomationCrossmintWalletForUser } from "../../../../../lib/crossmint/server";
 
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -16,11 +16,15 @@ function getConvexServiceToken() {
   return token;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const { userId: clerkUserId } = await auth();
     if (!clerkUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (request.headers.get("content-type")?.includes("application/json")) {
+      await request.json().catch(() => null);
     }
 
     const convex = getConvexClient();
@@ -41,8 +45,15 @@ export async function POST() {
     }
     if (!user) throw new Error("Failed to create user profile");
 
-    const wallet = await createOrGetCircleWalletForUser(convex, user._id);
-    return NextResponse.json({ ok: true, wallet });
+    const wallet = await ensureAutomationCrossmintWalletForUser({
+      convex,
+      user,
+    });
+    return NextResponse.json({
+      ok: true,
+      chainKey: wallet.chainKey,
+      wallet,
+    });
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Wallet link failed" },

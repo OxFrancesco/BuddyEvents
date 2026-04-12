@@ -1,4 +1,4 @@
-/// components/Web3Provider.tsx — Wagmi + TanStack Query provider for Monad
+/// components/Web3Provider.tsx — Wagmi + TanStack Query provider for supported chains
 "use client";
 
 import { ReactNode, useState } from "react";

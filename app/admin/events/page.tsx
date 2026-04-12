@@ -1,10 +1,9 @@
 /// app/admin/events/page.tsx — Admin moderation queue
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
-import { useAccount } from "wagmi";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -14,7 +13,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 export default function AdminEventsPage() {
-  const { address } = useAccount();
   const me = useQuery(api.users.me, {});
   const isAdmin = me?.role === "admin";
   const pending = useQuery(
@@ -23,7 +21,6 @@ export default function AdminEventsPage() {
   );
   const foundations = useQuery(api.teams.list, {});
   const projects = useQuery(api.projects.listAll, {});
-  const upsertMe = useMutation(api.users.upsertMe);
   const approveSubmission = useMutation(api.events.approveSubmission);
   const rejectSubmission = useMutation(api.events.rejectSubmission);
 
@@ -33,10 +30,6 @@ export default function AdminEventsPage() {
   );
   const [projectByEvent, setProjectByEvent] = useState<Record<string, string>>({});
   const [processingId, setProcessingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    void upsertMe({ walletAddress: address ?? undefined });
-  }, [address, upsertMe]);
 
   if (me === undefined || (isAdmin && pending === undefined)) {
     return (

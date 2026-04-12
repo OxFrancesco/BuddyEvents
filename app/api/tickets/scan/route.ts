@@ -4,6 +4,10 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { auth } from "@clerk/nextjs/server";
 import { api } from "../../../../convex/_generated/api";
+import {
+  listOwnedAddressesForUser,
+  userOwnsAddress,
+} from "../../../../lib/walletOwnership";
 
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -17,11 +21,6 @@ function getConvexServiceToken() {
   const token = process.env.CONVEX_SERVICE_TOKEN;
   if (!token) throw new Error("CONVEX_SERVICE_TOKEN is not set");
   return token;
-}
-
-function isSameAddress(a: string | undefined, b: string | undefined): boolean {
-  if (!a || !b) return false;
-  return a.toLowerCase() === b.toLowerCase();
 }
 
 export async function POST(request: Request) {
@@ -57,14 +56,24 @@ export async function POST(request: Request) {
     if (
       user.role !== "admin" &&
       requestedOrganizerAddress &&
-      !isSameAddress(user.walletAddress, requestedOrganizerAddress)
+      !(await userOwnsAddress({
+        convex,
+        user,
+        address: requestedOrganizerAddress,
+        serviceToken,
+      }))
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const ownedAddresses =
+      user.role === "admin"
+        ? []
+        : await listOwnedAddressesForUser({ convex, user, serviceToken });
+
     const result = await convex.mutation(api.tickets.scanForCheckIn, {
       qrCode,
-      organizerAddress: requestedOrganizerAddress || user.walletAddress,
+      organizerAddress: requestedOrganizerAddress || ownedAddresses[0],
       serviceToken,
     });
 

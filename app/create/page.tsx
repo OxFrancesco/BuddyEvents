@@ -1,7 +1,7 @@
 /// app/create/page.tsx — Moderated event submission form
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
@@ -17,6 +17,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { Header } from "@/components/Header";
+import {
+  DEFAULT_CHAIN_KEY,
+  SUPPORTED_CHAINS,
+  type SupportedChainKey,
+} from "@/lib/chains";
 
 type DestinationType = "foundation" | "project" | "unassigned";
 
@@ -25,8 +30,11 @@ export default function CreateEventPage() {
   const { address, isConnected } = useAccount();
   const { isSignedIn } = useUser();
   const submitEvent = useMutation(api.events.submit);
-  const upsertMe = useMutation(api.users.upsertMe);
   const me = useQuery(api.users.me, {});
+  const humanWallet = useQuery(
+    api.wallets.getByUserAndPurpose,
+    me ? { userId: me._id, purpose: "human_primary" } : "skip",
+  );
   const foundations = useQuery(api.teams.list, {});
   const allProjects = useQuery(api.projects.listAll, {});
 
@@ -35,6 +43,7 @@ export default function CreateEventPage() {
     useState<DestinationType>("foundation");
   const [selectedFoundationId, setSelectedFoundationId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [chainKey, setChainKey] = useState<SupportedChainKey>(DEFAULT_CHAIN_KEY);
   const [form, setForm] = useState({
     name: "",
     description: "",
@@ -47,11 +56,6 @@ export default function CreateEventPage() {
     location: "",
   });
 
-  useEffect(() => {
-    if (!isSignedIn) return;
-    void upsertMe({ walletAddress: address ?? undefined });
-  }, [address, isSignedIn, upsertMe]);
-
   const filteredProjects = useMemo(() => {
     if (!allProjects) return [];
     const active = allProjects.filter((project) => project.status === "active");
@@ -61,10 +65,11 @@ export default function CreateEventPage() {
 
   const isAdmin = me?.role === "admin";
   const willAutoPublish = isAdmin && destinationType !== "unassigned";
+  const creatorAddress = humanWallet?.walletAddress ?? address;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!address) return;
+    if (!creatorAddress) return;
 
     if (destinationType === "foundation" && !selectedFoundationId) {
       alert("Please select a foundation");
@@ -87,6 +92,7 @@ export default function CreateEventPage() {
         endTime: endMs,
         price: parseFloat(form.price),
         maxTickets: parseInt(form.maxTickets),
+        chainKey,
         foundationId:
           destinationType === "foundation"
             ? (selectedFoundationId as Id<"teams">)
@@ -96,7 +102,7 @@ export default function CreateEventPage() {
             ? (selectedProjectId as Id<"projects">)
             : undefined,
         location: form.location,
-        creatorAddress: address,
+        creatorAddress,
       });
 
       router.push(`/events/${eventId}`);
@@ -125,16 +131,37 @@ export default function CreateEventPage() {
             <CardTitle>Submit Event</CardTitle>
           </CardHeader>
           <CardContent>
-            {!isConnected ? (
+            {!isSignedIn ? (
+              <div className="text-center py-8 space-y-4">
+                <p className="text-muted-foreground">Sign in to submit an event</p>
+                <ConnectWallet />
+              </div>
+            ) : !creatorAddress ? (
               <div className="text-center py-8 space-y-4">
                 <p className="text-muted-foreground">
-                  Sign in and connect your wallet to submit an event
+                  Connect your wallet signer to provision a Crossmint smart wallet before submitting.
                 </p>
                 <ConnectWallet />
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="border-2 border-foreground/50 p-4 space-y-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="chainKey">Chain</Label>
+                    <select
+                      id="chainKey"
+                      className="w-full h-10 border-2 border-foreground bg-background px-3 text-sm font-medium"
+                      value={chainKey}
+                      onChange={(e) => setChainKey(e.target.value as SupportedChainKey)}
+                    >
+                      {SUPPORTED_CHAINS.map((chain) => (
+                        <option key={chain.key} value={chain.key}>
+                          {chain.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="space-y-2">
                     <Label htmlFor="destinationType">Submit Destination</Label>
                     <select
@@ -311,6 +338,18 @@ export default function CreateEventPage() {
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? "Submitting..." : "Submit Event"}
                 </Button>
+
+                <div className="space-y-1 text-center font-mono text-xs text-muted-foreground">
+                  <p>
+                    Creator wallet: {creatorAddress.slice(0, 6)}...
+                    {creatorAddress.slice(-4)}
+                  </p>
+                  {humanWallet?.walletAddress ? (
+                    <p>Using your Crossmint smart wallet linked to Clerk.</p>
+                  ) : isConnected && address ? (
+                    <p>Using your connected signer until smart-wallet provisioning completes.</p>
+                  ) : null}
+                </div>
               </form>
             )}
           </CardContent>

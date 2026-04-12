@@ -4,7 +4,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { NextAdapter } from "@x402/next";
 import {
-  HTTPFacilitatorClient,
   type HTTPRequestContext,
   type RouteConfig,
   x402HTTPResourceServer,
@@ -15,11 +14,16 @@ import type { Network } from "@x402/core/types";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 import type { Doc, Id } from "../../../../../convex/_generated/dataModel";
+import { parseJson, startWorkflowAndRun } from "../../../../../lib/effect/workflows";
+import { type SupportedChainKey } from "../../../../../lib/chains";
+import { resolveIdempotencyKey } from "../../../../../lib/idempotency";
 import {
-  FACILITATOR_URL,
-  MONAD_TESTNET_NETWORK,
-  MONAD_USDC_ADDRESS,
   PAY_TO_ADDRESS,
+  formatUsdcPrice,
+  getFacilitatorClient,
+  getX402Network,
+  getX402UsdcAddress,
+  toAtomicUsdcAmount,
 } from "../../../../../lib/x402";
 
 function getConvexClient() {
@@ -61,64 +65,86 @@ async function loadTeamWallet(event: Doc<"events">): Promise<string> {
   return team?.walletAddress ?? PAY_TO_ADDRESS;
 }
 
-const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL });
-const resourceServer = new x402ResourceServer(facilitatorClient);
+const httpServers = new Map<SupportedChainKey, x402HTTPResourceServer>();
 
-const monadScheme = new ExactEvmScheme();
-monadScheme.registerMoneyParser(async (amount: number, network: string) => {
-  if (network === MONAD_TESTNET_NETWORK) {
-    const tokenAmount = Math.floor(amount * 1_000_000).toString();
+function createHttpServer(chainKey: SupportedChainKey) {
+  const facilitatorClient = getFacilitatorClient(chainKey);
+  const resourceServer = new x402ResourceServer(facilitatorClient);
+  const network = getX402Network(chainKey);
+  const usdcAddress = getX402UsdcAddress(chainKey);
+  const scheme = new ExactEvmScheme();
+
+  scheme.registerMoneyParser(async (amount: number, requestedNetwork: string) => {
+    if (requestedNetwork !== network) {
+      return null;
+    }
     return {
-      amount: tokenAmount,
-      asset: MONAD_USDC_ADDRESS,
+      amount: toAtomicUsdcAmount(amount),
+      asset: usdcAddress,
       extra: { name: "USDC", version: "2" },
     };
-  }
-  return null;
-});
-resourceServer.register(MONAD_TESTNET_NETWORK, monadScheme);
+  });
+  resourceServer.register(network, scheme);
 
-const routeConfig: RouteConfig = {
-  accepts: {
-    scheme: "exact",
-    network: MONAD_TESTNET_NETWORK as Network,
-    payTo: async (context: HTTPRequestContext) => {
-      const event = await loadEventFromPath(context.path);
-      if (!event) return PAY_TO_ADDRESS;
-      return await loadTeamWallet(event);
+  const routeConfig: RouteConfig = {
+    accepts: {
+      scheme: "exact",
+      network: network as Network,
+      payTo: async (context: HTTPRequestContext) => {
+        const event = await loadEventFromPath(context.path);
+        if (!event || event.chainKey !== chainKey) return PAY_TO_ADDRESS;
+        return await loadTeamWallet(event);
+      },
+      price: async (context: HTTPRequestContext) => {
+        const event = await loadEventFromPath(context.path);
+        return formatUsdcPrice(
+          !event || event.chainKey !== chainKey ? 0.001 : event.price,
+        );
+      },
     },
-    price: async (context: HTTPRequestContext) => {
-      const event = await loadEventFromPath(context.path);
-      const price = event?.price ?? 0.001;
-      const normalized = Number.isFinite(price) && price > 0 ? price : 0.001;
-      return `$${normalized.toFixed(6)}`;
-    },
-  },
-  resource: "https://buddyevents.local/api/events/[id]/buy",
-  description: "Purchase event ticket",
-  mimeType: "application/json",
-};
+    resource: "https://buddyevents.local/api/events/[id]/buy",
+    description: "Purchase event ticket",
+    mimeType: "application/json",
+  };
 
-const httpServer = new x402HTTPResourceServer(resourceServer, {
-  "GET /api/events/*/buy": routeConfig,
-});
+  const httpServer = new x402HTTPResourceServer(resourceServer, {
+    "GET /api/events/*/buy": routeConfig,
+  });
 
-// Grant free events without payment; block invalid/sold-out events up-front.
-httpServer.onProtectedRequest(async (context) => {
-  const event = await loadEventFromPath(context.path);
-  if (!event) return { abort: true as const, reason: "Event not found" };
-  if (event.status !== "active")
-    return { abort: true as const, reason: "Event not active" };
-  if (event.ticketsSold >= event.maxTickets)
-    return { abort: true as const, reason: "Event sold out" };
-  if (event.price <= 0) return { grantAccess: true as const };
-  return;
-});
+  httpServer.onProtectedRequest(async (context) => {
+    const event = await loadEventFromPath(context.path);
+    if (!event) return { abort: true as const, reason: "Event not found" };
+    if (event.chainKey !== chainKey) {
+      return { abort: true as const, reason: "Event chain mismatch" };
+    }
+    if (event.status !== "active") {
+      return { abort: true as const, reason: "Event not active" };
+    }
+    if (event.ticketsSold >= event.maxTickets) {
+      return { abort: true as const, reason: "Event sold out" };
+    }
+    if (event.price <= 0) {
+      return { grantAccess: true as const };
+    }
+    return;
+  });
+
+  return httpServer;
+}
+
+function getHttpServer(chainKey: SupportedChainKey) {
+  const existing = httpServers.get(chainKey);
+  if (existing) return existing;
+  const server = createHttpServer(chainKey);
+  httpServers.set(chainKey, server);
+  return server;
+}
 
 type BuyTicketResponse = {
   success: boolean;
   ticketId: string | null;
   qrCode: string | null;
+  workflowId: string | null;
   eventId: string;
   buyer: string;
   message: string;
@@ -168,7 +194,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const convex = getConvexClient();
-    const serviceToken = getConvexServiceToken();
+    getConvexServiceToken();
     const event = await convex.query(api.events.get, {
       id: eventId as Id<"events">,
     });
@@ -178,6 +204,7 @@ export async function GET(request: NextRequest) {
           success: false,
           ticketId: null,
           qrCode: null,
+          workflowId: null,
           eventId,
           buyer: requestedBuyer ?? "",
           message: "Event not found",
@@ -187,6 +214,7 @@ export async function GET(request: NextRequest) {
         404,
       );
     }
+    const httpServer = getHttpServer(event.chainKey);
 
     const processResult = await httpServer.processHTTPRequest(buildContext(request));
 
@@ -202,6 +230,7 @@ export async function GET(request: NextRequest) {
           success: false,
           ticketId: null,
           qrCode: null,
+          workflowId: null,
           eventId,
           buyer: requestedBuyer ?? "",
           message,
@@ -220,6 +249,7 @@ export async function GET(request: NextRequest) {
             success: false,
             ticketId: null,
             qrCode: null,
+            workflowId: null,
             eventId,
             buyer: requestedBuyer ?? "",
             message: "buyer must be a valid wallet address for free events",
@@ -230,20 +260,54 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      const purchase = await convex.mutation(api.tickets.recordPurchaseAndIssueQr, {
-        eventId: eventId as Id<"events">,
-        buyerAddress: requestedBuyer,
-        buyerAgentId: buyerAgentId ?? undefined,
-        purchasePrice: event.price,
-        txHash: `free-${Date.now()}`,
-        serviceToken,
+      const idempotencyKey = resolveIdempotencyKey({
+        explicitKey: request.headers.get("Idempotency-Key") ?? undefined,
+        fallbackNamespace: "free-ticket",
+        fallbackParts: [eventId, requestedBuyer, buyerAgentId ?? "user"],
       });
+
+      const workflow = await startWorkflowAndRun({
+        workflowName: "ticket_purchase",
+        idempotencyKey,
+        source: "x402_free",
+        payload: {
+          eventId: eventId as Id<"events">,
+          buyerAddress: requestedBuyer,
+          buyerAgentId: buyerAgentId ?? undefined,
+          purchasePrice: event.price,
+          purchaseSource: "free" as const,
+          purchaseReference: idempotencyKey,
+          txHash: `free:${idempotencyKey}`,
+        },
+      });
+      const purchase = parseJson<{
+        ticketId: string;
+        qrToken: string;
+      }>(workflow.completed?.resultJson);
+
+      if (!purchase) {
+        return jsonWithHeaders(
+          {
+            success: false,
+            ticketId: null,
+            qrCode: null,
+            workflowId: workflow.execution._id,
+            eventId,
+            buyer: requestedBuyer,
+            message: "Ticket workflow queued",
+            txHash: null,
+            timestamp: new Date().toISOString(),
+          },
+          202,
+        );
+      }
 
       return jsonWithHeaders(
         {
           success: true,
           ticketId: purchase.ticketId,
           qrCode: purchase.qrToken,
+          workflowId: workflow.execution._id,
           eventId,
           buyer: requestedBuyer ?? "",
           message: "Free ticket granted",
@@ -266,6 +330,7 @@ export async function GET(request: NextRequest) {
           success: false,
           ticketId: null,
           qrCode: null,
+          workflowId: null,
           eventId,
           buyer: requestedBuyer ?? "",
           message:
@@ -286,6 +351,7 @@ export async function GET(request: NextRequest) {
           success: false,
           ticketId: null,
           qrCode: null,
+          workflowId: null,
           eventId,
           buyer: settledBuyerCandidate ?? "",
           message: "Unable to determine a valid buyer wallet address",
@@ -293,23 +359,63 @@ export async function GET(request: NextRequest) {
           timestamp: new Date().toISOString(),
         },
         400,
+        );
+      }
+
+    const idempotencyKey = resolveIdempotencyKey({
+      explicitKey: request.headers.get("Idempotency-Key") ?? undefined,
+      fallbackNamespace: "x402-ticket",
+      fallbackParts: [
+        eventId,
+        settledBuyerCandidate,
+        settlement.transaction ?? "missing-tx",
+        buyerAgentId ?? "user",
+      ],
+    });
+
+    const workflow = await startWorkflowAndRun({
+      workflowName: "ticket_purchase",
+      idempotencyKey,
+      source: "x402",
+      payload: {
+        eventId: eventId as Id<"events">,
+        buyerAddress: settledBuyerCandidate,
+        buyerAgentId: buyerAgentId ?? undefined,
+        purchasePrice: event.price,
+        purchaseSource: "x402" as const,
+        purchaseReference: idempotencyKey,
+        txHash: settlement.transaction,
+      },
+    });
+    const purchase = parseJson<{
+      ticketId: string;
+      qrToken: string;
+    }>(workflow.completed?.resultJson);
+
+    if (!purchase) {
+      return jsonWithHeaders(
+        {
+          success: false,
+          ticketId: null,
+          qrCode: null,
+          workflowId: workflow.execution._id,
+          eventId,
+          buyer: settledBuyerCandidate,
+          message: "Ticket workflow queued",
+          txHash: settlement.transaction,
+          timestamp: new Date().toISOString(),
+        },
+        202,
+        settlement.headers,
       );
     }
-
-    const purchase = await convex.mutation(api.tickets.recordPurchaseAndIssueQr, {
-      eventId: eventId as Id<"events">,
-      buyerAddress: settledBuyerCandidate,
-      buyerAgentId: buyerAgentId ?? undefined,
-      purchasePrice: event.price,
-      txHash: settlement.transaction,
-      serviceToken,
-    });
 
     return jsonWithHeaders(
       {
         success: true,
         ticketId: purchase.ticketId,
         qrCode: purchase.qrToken,
+        workflowId: workflow.execution._id,
         eventId,
         buyer: settledBuyerCandidate,
         message: "Ticket purchased successfully via x402",
@@ -325,6 +431,7 @@ export async function GET(request: NextRequest) {
         success: false,
         ticketId: null,
         qrCode: null,
+        workflowId: null,
         eventId,
         buyer: requestedBuyer ?? "",
         message: error instanceof Error ? error.message : "Purchase failed",

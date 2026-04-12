@@ -1,9 +1,8 @@
 /// app/check-in/page.tsx — Organizer ticket check-in page
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
-import Link from "next/link";
-import { useMutation } from "convex/react";
+import { FormEvent, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
 import { useUser } from "@clerk/nextjs";
 import { useAccount } from "wagmi";
 import { api } from "../../convex/_generated/api";
@@ -30,30 +29,30 @@ type CheckInResult = {
 };
 
 export default function CheckInPage() {
-  const { address, isConnected } = useAccount();
+  const { address } = useAccount();
   const { isSignedIn } = useUser();
-  const upsertMe = useMutation(api.users.upsertMe);
+  const me = useQuery(api.users.me, {});
+  const humanWallet = useQuery(
+    api.wallets.getByUserAndPurpose,
+    me ? { userId: me._id, purpose: "human_primary" } : "skip",
+  );
   const scanForCheckIn = useMutation(api.tickets.scanForCheckIn);
 
   const [qrCode, setQrCode] = useState("");
   const [result, setResult] = useState<CheckInResult | null>(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!isSignedIn) return;
-    void upsertMe({ walletAddress: address ?? undefined });
-  }, [address, isSignedIn, upsertMe]);
+  const organizerAddress = humanWallet?.walletAddress ?? address;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!address || !isSignedIn || !qrCode.trim()) return;
+    if (!organizerAddress || !isSignedIn || !qrCode.trim()) return;
 
     setLoading(true);
     setResult(null);
     try {
       const response = await scanForCheckIn({
         qrCode: qrCode.trim(),
-        organizerAddress: address,
+        organizerAddress,
       });
       setResult(response as CheckInResult);
       if (response.ok) setQrCode("");
@@ -84,19 +83,19 @@ export default function CheckInPage() {
             <CardTitle>Ticket Scanner</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!isConnected ? (
-              <div className="space-y-3 text-sm">
-                <p className="text-muted-foreground">
-                  Connect the organizer wallet to validate tickets.
-                </p>
-                <ConnectWallet />
-              </div>
-            ) : !isSignedIn ? (
+            {!isSignedIn ? (
               <div className="space-y-3 text-sm">
                 <p className="text-muted-foreground">
                   Sign in with Clerk to validate tickets.
                 </p>
                 <Button className="w-full" disabled>Sign-in required</Button>
+              </div>
+            ) : !organizerAddress ? (
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">
+                  Connect the organizer signer wallet to provision or link your Crossmint wallet.
+                </p>
+                <ConnectWallet />
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-3">

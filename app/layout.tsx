@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { Montserrat, Source_Code_Pro, Playfair_Display } from "next/font/google";
 import "./globals.css";
 import ConvexClientProvider from "@/components/ConvexClientProvider";
+import { CrossmintProvider } from "@/components/CrossmintProvider";
+import { UserWalletSync } from "@/components/UserWalletSync";
 import { Web3Provider } from "@/components/Web3Provider";
 import { ClerkProvider } from "@clerk/nextjs";
 
@@ -27,7 +29,7 @@ const playfairDisplay = Playfair_Display({
 export const metadata: Metadata = {
   title: "BuddyEvents — Agent-Native Event Ticketing",
   description:
-    "Buy, sell, create and manage event tickets with AI agents on Monad. Powered by x402 payments and NFT tickets.",
+    "Buy, sell, create and manage event tickets with AI agents on Monad Testnet and Base Mainnet. Powered by x402 payments and NFT tickets.",
   icons: {
     icon: "/favicon.png",
   },
@@ -38,6 +40,9 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const crossmintClientApiKey = process.env.NEXT_PUBLIC_CROSSMINT_CLIENT_API_KEY;
+  const crossmintJwtTemplate = process.env.CLERK_CROSSMINT_JWT_TEMPLATE ?? "crossmint";
+
   return (
     <html lang="en" className="dark">
       <body
@@ -45,7 +50,15 @@ export default function RootLayout({
       >
         <ClerkProvider dynamic>
           <ConvexClientProvider>
-            <Web3Provider>{children}</Web3Provider>
+            <CrossmintProvider
+              apiKey={crossmintClientApiKey}
+              jwtTemplate={crossmintJwtTemplate}
+            >
+              <Web3Provider>
+                <UserWalletSync />
+                {children}
+              </Web3Provider>
+            </CrossmintProvider>
           </ConvexClientProvider>
         </ClerkProvider>
       </body>

@@ -3,7 +3,20 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { requireAdmin, requireAdminOrService, requireSignedInUser } from "./lib/auth";
+import {
+  requireAdmin,
+  requireAdminOrService,
+  requireServiceAccess,
+  requireSignedInUser,
+} from "./lib/auth";
+import {
+  chainIdValidator,
+  chainKeyValidator,
+  resolveEventChainId,
+  resolveEventChainKey,
+  withDefaultEventChain,
+} from "./lib/chains";
+import { resolveUserByAnyWalletAddress } from "./lib/walletOwnership";
 
 const eventStatusValidator = v.union(
   v.literal("draft"),
@@ -24,6 +37,16 @@ const moderationStatusValidator = v.union(
   v.literal("rejected"),
 );
 
+const chainStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("confirmed"),
+  v.literal("failed"),
+);
+
+function normalizeEventRecord(event: Doc<"events">) {
+  return withDefaultEventChain(event);
+}
+
 const eventValidator = v.object({
   _id: v.id("events"),
   _creationTime: v.number(),
@@ -34,12 +57,17 @@ const eventValidator = v.object({
   price: v.number(),
   maxTickets: v.number(),
   ticketsSold: v.number(),
+  chainKey: chainKeyValidator,
+  chainId: chainIdValidator,
   teamId: v.optional(v.id("teams")),
   projectId: v.optional(v.id("projects")),
   sponsors: v.array(v.id("sponsors")),
   location: v.string(),
   onChainEventId: v.optional(v.number()),
   contractAddress: v.optional(v.string()),
+  chainStatus: v.optional(chainStatusValidator),
+  chainReference: v.optional(v.string()),
+  chainLastError: v.optional(v.string()),
   creatorAddress: v.string(),
   status: eventStatusValidator,
   submissionSource: v.optional(submissionSourceValidator),
@@ -70,8 +98,10 @@ export const list = query({
           .collect()
       : await ctx.db.query("events").order("desc").collect();
 
-    if (!args.moderationStatus) return events;
-    return events.filter(
+    const normalizedEvents = events.map(normalizeEventRecord);
+
+    if (!args.moderationStatus) return normalizedEvents;
+    return normalizedEvents.filter(
       (event) => effectiveModerationStatus(event) === args.moderationStatus,
     );
   },
@@ -81,7 +111,8 @@ export const get = query({
   args: { id: v.id("events") },
   returns: v.union(eventValidator, v.null()),
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
+    const event = await ctx.db.get(args.id);
+    return event ? normalizeEventRecord(event) : null;
   },
 });
 
@@ -93,7 +124,9 @@ export const getMany = query({
 
     const uniqueIds = Array.from(new Set(args.ids));
     const events = await Promise.all(uniqueIds.map((id) => ctx.db.get(id)));
-    return events.filter((event): event is Doc<"events"> => event !== null);
+    return events
+      .filter((event): event is Doc<"events"> => event !== null)
+      .map(normalizeEventRecord);
   },
 });
 
@@ -107,6 +140,8 @@ const sectionEventValidator = v.object({
   price: v.number(),
   maxTickets: v.number(),
   ticketsSold: v.number(),
+  chainKey: chainKeyValidator,
+  chainId: chainIdValidator,
   teamId: v.optional(v.id("teams")),
   projectId: v.optional(v.id("projects")),
   location: v.string(),
@@ -144,6 +179,8 @@ export const listEventsPageSections = query({
         price: number;
         maxTickets: number;
         ticketsSold: number;
+        chainKey: "monadTestnet" | "baseMainnet";
+        chainId: 10143 | 8453;
         teamId: Doc<"events">["teamId"];
         projectId: Doc<"events">["projectId"];
         location: string;
@@ -173,6 +210,8 @@ export const listEventsPageSections = query({
         price: event.price,
         maxTickets: event.maxTickets,
         ticketsSold: event.ticketsSold,
+        chainKey: resolveEventChainKey(event),
+        chainId: resolveEventChainId(event),
         teamId: foundationId,
         projectId: project?._id,
         location: event.location,
@@ -204,6 +243,8 @@ export const listPendingSubmissions = query({
       price: v.number(),
       maxTickets: v.number(),
       ticketsSold: v.number(),
+      chainKey: chainKeyValidator,
+      chainId: chainIdValidator,
       teamId: v.optional(v.id("teams")),
       projectId: v.optional(v.id("projects")),
       location: v.string(),
@@ -233,17 +274,28 @@ export const listPendingSubmissions = query({
 
     const foundationMap = new Map(foundations.map((item) => [item._id, item]));
     const projectMap = new Map(projects.map((item) => [item._id, item]));
-    const userByWallet = new Map(
-      users
-        .filter((user) => !!user.walletAddress)
-        .map((user) => [user.walletAddress!, user]),
-    );
+    const userByWallet = new Map<string, Doc<"users">>();
+    for (const user of users) {
+      if (user.walletAddress) {
+        userByWallet.set(user.walletAddress.toLowerCase(), user);
+      }
+    }
+    const wallets = await ctx.db.query("wallets").collect();
+    for (const wallet of wallets) {
+      if (!wallet.userId || userByWallet.has(wallet.walletAddress.toLowerCase())) continue;
+      const owner = users.find((user) => user._id === wallet.userId);
+      if (owner) {
+        userByWallet.set(wallet.walletAddress.toLowerCase(), owner);
+      }
+    }
 
-    return events.map((event) => {
+    return await Promise.all(events.map(async (event) => {
       const project = event.projectId ? projectMap.get(event.projectId) : undefined;
       const foundationId = project?.foundationId ?? event.teamId;
       const foundation = foundationId ? foundationMap.get(foundationId) : undefined;
-      const submitter = userByWallet.get(event.creatorAddress);
+      const submitter =
+        userByWallet.get(event.creatorAddress.toLowerCase()) ??
+        (await resolveUserByAnyWalletAddress(ctx, event.creatorAddress));
 
       return {
         _id: event._id,
@@ -255,6 +307,8 @@ export const listPendingSubmissions = query({
         price: event.price,
         maxTickets: event.maxTickets,
         ticketsSold: event.ticketsSold,
+        chainKey: resolveEventChainKey(event),
+        chainId: resolveEventChainId(event),
         teamId: foundationId,
         projectId: project?._id,
         location: event.location,
@@ -267,7 +321,7 @@ export const listPendingSubmissions = query({
         submitterEmail: submitter?.email,
         submitterRole: submitter?.role,
       };
-    });
+    }));
   },
 });
 
@@ -281,6 +335,7 @@ export const create = mutation({
     endTime: v.number(),
     price: v.number(),
     maxTickets: v.number(),
+    chainKey: v.optional(chainKeyValidator),
     teamId: v.id("teams"),
     sponsors: v.optional(v.array(v.id("sponsors"))),
     location: v.string(),
@@ -293,6 +348,7 @@ export const create = mutation({
 
     const team = await ctx.db.get(args.teamId);
     if (!team) throw new Error("Team not found");
+    const chainKey = args.chainKey ?? "monadTestnet";
 
     return await ctx.db.insert("events", {
       name: args.name,
@@ -302,6 +358,8 @@ export const create = mutation({
       price: args.price,
       maxTickets: args.maxTickets,
       ticketsSold: 0,
+      chainKey,
+      chainId: resolveEventChainId({ chainKey }),
       teamId: args.teamId,
       sponsors: args.sponsors ?? [],
       location: args.location,
@@ -326,6 +384,7 @@ export const submit = mutation({
     sponsors: v.optional(v.array(v.id("sponsors"))),
     location: v.string(),
     creatorAddress: v.string(),
+    chainKey: v.optional(chainKeyValidator),
   },
   returns: v.id("events"),
   handler: async (ctx, args) => {
@@ -349,6 +408,7 @@ export const submit = mutation({
     const isAdmin = submitter.role === "admin";
     const hasAssignment = foundationId !== undefined || args.projectId !== undefined;
     const autoApprove = isAdmin && hasAssignment;
+    const chainKey = args.chainKey ?? "monadTestnet";
 
     return await ctx.db.insert("events", {
       name: args.name,
@@ -358,6 +418,8 @@ export const submit = mutation({
       price: args.price,
       maxTickets: args.maxTickets,
       ticketsSold: 0,
+      chainKey,
+      chainId: resolveEventChainId({ chainKey }),
       teamId: foundationId,
       projectId: args.projectId,
       sponsors: args.sponsors ?? [],
@@ -372,6 +434,9 @@ export const submit = mutation({
       moderationStatus: autoApprove
         ? ("approved" as const)
         : ("pending" as const),
+      chainStatus: undefined,
+      chainReference: undefined,
+      chainLastError: undefined,
       reviewedByUserId: autoApprove ? submitter._id : undefined,
       reviewedAt: autoApprove ? Date.now() : undefined,
     });
@@ -505,19 +570,174 @@ export const cancel = mutation({
   },
 });
 
+export const createProvisional = mutation({
+  args: {
+    name: v.string(),
+    description: v.string(),
+    startTime: v.number(),
+    endTime: v.number(),
+    price: v.number(),
+    maxTickets: v.number(),
+    teamId: v.id("teams"),
+    sponsors: v.optional(v.array(v.id("sponsors"))),
+    location: v.string(),
+    creatorAddress: v.string(),
+    chainKey: chainKeyValidator,
+    chainReference: v.string(),
+    serviceToken: v.optional(v.string()),
+  },
+  returns: v.id("events"),
+  handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+
+    const existing = await ctx.db
+      .query("events")
+      .withIndex("by_chain_reference", (q) =>
+        q.eq("chainReference", args.chainReference),
+      )
+      .unique();
+    if (existing) return existing._id;
+
+    const team = await ctx.db.get(args.teamId);
+    if (!team) throw new Error("Team not found");
+
+    return await ctx.db.insert("events", {
+      name: args.name,
+      description: args.description,
+      startTime: args.startTime,
+      endTime: args.endTime,
+      price: args.price,
+      maxTickets: args.maxTickets,
+      ticketsSold: 0,
+      chainKey: args.chainKey,
+      chainId: resolveEventChainId(args),
+      teamId: args.teamId,
+      sponsors: args.sponsors ?? [],
+      location: args.location,
+      creatorAddress: args.creatorAddress,
+      status: "draft" as const,
+      submissionSource: "foundation_admin" as const,
+      moderationStatus: "approved" as const,
+      chainStatus: "pending" as const,
+      chainReference: args.chainReference,
+      chainLastError: undefined,
+    });
+  },
+});
+
+export const markChainConfirmed = mutation({
+  args: {
+    id: v.id("events"),
+    chainKey: chainKeyValidator,
+    chainId: chainIdValidator,
+    onChainEventId: v.number(),
+    contractAddress: v.string(),
+    chainReference: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+    await ctx.db.patch(args.id, {
+      chainKey: args.chainKey,
+      chainId: args.chainId,
+      onChainEventId: args.onChainEventId,
+      contractAddress: args.contractAddress,
+      chainStatus: "confirmed",
+      chainReference: args.chainReference,
+      chainLastError: undefined,
+      status: "active",
+    });
+    return null;
+  },
+});
+
+export const markChainFailed = mutation({
+  args: {
+    id: v.id("events"),
+    error: v.string(),
+    chainReference: v.optional(v.string()),
+    serviceToken: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireAdminOrService(ctx, args.serviceToken);
+    await ctx.db.patch(args.id, {
+      chainStatus: "failed",
+      chainReference: args.chainReference,
+      chainLastError: args.error,
+      status: "cancelled",
+    });
+    return null;
+  },
+});
+
 // Internal mutation for setting on-chain data after deployment
 export const setOnChainData = internalMutation({
   args: {
     id: v.id("events"),
+    chainKey: v.optional(chainKeyValidator),
+    chainId: v.optional(chainIdValidator),
     onChainEventId: v.number(),
     contractAddress: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const chainKey = args.chainKey ?? "monadTestnet";
     await ctx.db.patch(args.id, {
+      chainKey,
+      chainId: args.chainId ?? resolveEventChainId({ chainKey }),
       onChainEventId: args.onChainEventId,
       contractAddress: args.contractAddress,
+      chainStatus: "confirmed",
+      chainLastError: undefined,
+      status: "active",
     });
     return null;
+  },
+});
+
+export const backfillChainMetadata = internalMutation({
+  args: {},
+  returns: v.object({
+    updated: v.number(),
+  }),
+  handler: async (ctx) => {
+    const events = await ctx.db.query("events").collect();
+    let updated = 0;
+
+    for (const event of events) {
+      if (event.chainKey && event.chainId) continue;
+      await ctx.db.patch(event._id, {
+        chainKey: resolveEventChainKey(event),
+        chainId: resolveEventChainId(event),
+      });
+      updated += 1;
+    }
+
+    return { updated };
+  },
+});
+
+export const backfillChainMetadataService = mutation({
+  args: {
+    serviceToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireServiceAccess(args.serviceToken);
+    const events = await ctx.db.query("events").collect();
+    let updated = 0;
+
+    for (const event of events) {
+      if (event.chainKey && event.chainId) continue;
+      const normalized = withDefaultEventChain(event);
+      await ctx.db.patch(event._id, {
+        chainKey: normalized.chainKey,
+        chainId: normalized.chainId,
+      });
+      updated += 1;
+    }
+
+    return { updated };
   },
 });

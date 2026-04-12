@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { auth } from "@clerk/nextjs/server";
 import { api } from "../../../../../convex/_generated/api";
-import { getWalletBalance, getCircleConfigForServer } from "../../../../../lib/circle";
+import { getCrossmintWalletBalances } from "../../../../../lib/crossmint/server";
+import { normalizeSupportedChainKey } from "../../../../../lib/chains";
 
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -16,12 +17,16 @@ function getConvexServiceToken() {
   return token;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { userId: clerkUserId } = await auth();
     if (!clerkUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const chainKey = normalizeSupportedChainKey(
+      new URL(request.url).searchParams.get("chainKey"),
+    );
 
     const convex = getConvexClient();
     const serviceToken = getConvexServiceToken();
@@ -36,20 +41,23 @@ export async function GET() {
       );
     }
 
-    const wallet = await convex.query(api.wallets.getByUser, {
+    const wallet = await convex.query(api.wallets.getByUserAndPurpose, {
       userId: user._id,
+      purpose: "automation",
       serviceToken,
     });
     if (!wallet) {
       return NextResponse.json(
-        { error: "No linked Circle wallet found." },
+        { error: "No linked Crossmint automation wallet found." },
         { status: 404 },
       );
     }
 
-    const config = getCircleConfigForServer();
-    const balances = await getWalletBalance(config.apiKey, wallet.walletId);
-    return NextResponse.json({ ok: true, wallet, balances });
+    const balances = await getCrossmintWalletBalances({
+      walletAddress: wallet.walletAddress,
+      chainKey,
+    });
+    return NextResponse.json({ ok: true, chainKey, wallet, balances });
   } catch (error) {
     return NextResponse.json(
       {

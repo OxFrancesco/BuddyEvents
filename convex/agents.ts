@@ -4,11 +4,7 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { requireSignedInUserOrService } from "./lib/auth";
-
-function isSameAddress(a: string | undefined, b: string): boolean {
-  if (!a) return false;
-  return a.toLowerCase() === b.toLowerCase();
-}
+import { userOwnsAddress } from "./lib/walletOwnership";
 
 export const getByWallet = query({
   args: { walletAddress: v.string() },
@@ -61,7 +57,7 @@ export const register = mutation({
     if (
       actor &&
       actor.role !== "admin" &&
-      !isSameAddress(actor.walletAddress, args.ownerAddress)
+      !(await userOwnsAddress(ctx, actor, args.ownerAddress))
     ) {
       throw new Error("ownerAddress must match caller wallet");
     }

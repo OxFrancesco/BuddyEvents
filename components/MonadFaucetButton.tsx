@@ -6,7 +6,7 @@ export function MonadFaucetButton() {
   return (
     <Button asChild variant="ghost" size="sm">
       <a href="https://faucet.monad.xyz" target="_blank" rel="noreferrer">
-        Monad Faucet
+        Monad Testnet Faucet
       </a>
     </Button>
   );

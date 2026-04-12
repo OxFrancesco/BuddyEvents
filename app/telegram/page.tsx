@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSignIn, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { TicketQRCode } from "@/components/TicketQRCode";
+import {
+  DEFAULT_CHAIN_KEY,
+  SUPPORTED_CHAINS,
+  type SupportedChainKey,
+} from "@/lib/chains";
 
 type PiResult = {
   ok: boolean;
@@ -42,9 +47,11 @@ export default function TelegramMiniAppPage() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<PiResult | null>(null);
   const [walletInfo, setWalletInfo] = useState<{
+    chainKey?: SupportedChainKey;
     walletAddress?: string;
     balances?: Array<{ token?: { symbol?: string }; amount?: string }>;
   } | null>(null);
+  const [chainKey, setChainKey] = useState<SupportedChainKey>(DEFAULT_CHAIN_KEY);
   const [buyEventId, setBuyEventId] = useState("");
   const [qrTicketId, setQrTicketId] = useState("");
   const [qrToken, setQrToken] = useState<string | null>(null);
@@ -141,9 +148,14 @@ export default function TelegramMiniAppPage() {
   async function connectWallet() {
     setBusy(true);
     try {
-      const resp = await fetch("/api/pi/wallet/connect", { method: "POST" });
+      const resp = await fetch("/api/pi/wallet/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chainKey }),
+      });
       const json = (await resp.json()) as {
         ok?: boolean;
+        chainKey?: SupportedChainKey;
         wallet?: { walletAddress?: string };
         error?: string;
       };
@@ -162,23 +174,25 @@ export default function TelegramMiniAppPage() {
     }
   }
 
-  async function refreshWalletBalance() {
-    const resp = await fetch("/api/pi/wallet/balance");
+  const refreshWalletBalance = useCallback(async () => {
+    const resp = await fetch(`/api/pi/wallet/balance?chainKey=${chainKey}`);
     const json = (await resp.json()) as {
       ok?: boolean;
+      chainKey?: SupportedChainKey;
       wallet?: { walletAddress?: string };
       balances?: Array<{ token?: { symbol?: string }; amount?: string }>;
       error?: string;
     };
     if (resp.ok && json.ok) {
       setWalletInfo({
+        chainKey: json.chainKey,
         walletAddress: json.wallet?.walletAddress,
         balances: json.balances,
       });
     } else {
       setWalletInfo(null);
     }
-  }
+  }, [chainKey]);
 
   async function loadQr() {
     if (!qrTicketId.trim()) return;
@@ -209,7 +223,7 @@ export default function TelegramMiniAppPage() {
     if (canRunActions) {
       void refreshWalletBalance();
     }
-  }, [canRunActions]);
+  }, [canRunActions, refreshWalletBalance]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -254,10 +268,31 @@ export default function TelegramMiniAppPage() {
               <CardTitle>Wallet</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
+              <div className="space-y-2">
+                <Label htmlFor="walletChain">Chain</Label>
+                <select
+                  id="walletChain"
+                  className="w-full h-10 border-2 border-foreground bg-background px-3 text-sm font-medium"
+                  value={chainKey}
+                  onChange={(event) => setChainKey(event.target.value as SupportedChainKey)}
+                >
+                  {SUPPORTED_CHAINS.map((chain) => (
+                    <option key={chain.key} value={chain.key}>
+                      {chain.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <p>
                 <span className="text-muted-foreground uppercase text-xs tracking-wider">Address:</span>{" "}
                 <span className="font-mono text-xs break-all">
                   {walletInfo?.walletAddress ?? "Not connected"}
+                </span>
+              </p>
+              <p>
+                <span className="text-muted-foreground uppercase text-xs tracking-wider">Selected:</span>{" "}
+                <span className="font-mono text-xs break-all">
+                  {walletInfo?.chainKey ?? chainKey}
                 </span>
               </p>
               <div className="space-y-1">

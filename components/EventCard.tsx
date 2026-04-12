@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Id } from "../convex/_generated/dataModel";
+import { getChainLabel } from "@/lib/chains";
 
 interface EventCardProps {
   id: Id<"events">;
@@ -24,6 +25,7 @@ interface EventCardProps {
   ticketsSold: number;
   location: string;
   status: string;
+  chainKey: "monadTestnet" | "baseMainnet";
 }
 
 export function EventCard({
@@ -35,6 +37,7 @@ export function EventCard({
   ticketsSold,
   location,
   status,
+  chainKey,
 }: EventCardProps) {
   const startDate = new Date(startTime);
   const spotsLeft = maxTickets - ticketsSold;
@@ -44,9 +47,12 @@ export function EventCard({
       <CardHeader>
         <div className="flex justify-between items-start">
           <CardTitle className="text-base">{name}</CardTitle>
-          <Badge variant={status === "active" ? "default" : "secondary"}>
-            {status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">{getChainLabel(chainKey)}</Badge>
+            <Badge variant={status === "active" ? "default" : "secondary"}>
+              {status}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="flex-1 space-y-3 text-sm">
