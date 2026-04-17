@@ -4,7 +4,13 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
-import { BUDDY_EVENTS_ADDRESS, MONAD_USDC_TESTNET } from "./monad";
+import {
+  DEFAULT_CHAIN_KEY,
+  getCircleBlockchain,
+  getConfiguredBuddyEventsAddress,
+  getUsdcAddressForChain,
+  type SupportedChainKey,
+} from "./chains";
 
 const CIRCLE_API_BASE = "https://api.circle.com/v1/w3s";
 
@@ -57,12 +63,12 @@ export async function createWalletSet(
   return data.data.walletSet;
 }
 
-// Create developer-controlled wallets on Monad (via EVM)
+// Create developer-controlled wallets on the requested EVM chain
 export async function createWallets(
   config: CircleWalletConfig,
   walletSetId: string,
   count: number = 1,
-  blockchain: string = "MONAD-TESTNET",
+  blockchain: string = getCircleBlockchain(DEFAULT_CHAIN_KEY),
 ) {
   const response = await fetch(`${CIRCLE_API_BASE}/developer/wallets`, {
     method: "POST",
@@ -106,6 +112,7 @@ export async function transferTokens(
   destinationAddress: string,
   tokenAddress: string,
   amount: string,
+  blockchain: string = getCircleBlockchain(DEFAULT_CHAIN_KEY),
 ) {
   const response = await fetch(
     `${CIRCLE_API_BASE}/developer/wallets/${walletId}/tokenTransfers`,
@@ -121,7 +128,7 @@ export async function transferTokens(
         amounts: [amount],
         destinationAddress,
         tokenAddress,
-        blockchain: "MONAD-TESTNET",
+        blockchain,
       }),
     },
   );
@@ -139,6 +146,7 @@ export async function createContractExecutionTransaction(
     abiFunctionSignature: string;
     abiParameters: Array<string | number | boolean | Array<unknown>>;
     blockchain?: string;
+    idempotencyKey?: string;
   },
 ) {
   const response = await fetch(
@@ -150,7 +158,7 @@ export async function createContractExecutionTransaction(
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: args.idempotencyKey ?? crypto.randomUUID(),
         entitySecretCiphertext: config.entitySecretCiphertext,
         walletId: args.walletId,
         blockchain: args.blockchain ?? "MONAD-TESTNET",
@@ -170,30 +178,136 @@ export async function createContractExecutionTransaction(
   }
   const data = await response.json();
   const tx = data?.data;
-  if (!tx) throw new Error("Circle contract execution missing transaction data");
-  return tx as { transactionId?: string; id?: string };
+  if (!tx)
+    throw new Error("Circle contract execution missing transaction data");
+  return tx as {
+    transactionId?: string;
+    id?: string;
+    txHash?: string;
+    transactionHash?: string;
+    state?: string;
+  };
+}
+
+export type CircleContractExecutionResult = {
+  txHash: string;
+  transactionId?: string;
+  onChainEventId?: number;
+  state?: string;
+};
+
+export type CircleTransactionResult = {
+  id: string;
+  state?: string;
+  txHash?: string;
+  blockchain?: string;
+  errorReason?: string;
+  raw: unknown;
+};
+
+async function tryGetCircleTransaction(
+  apiKey: string,
+  path: string,
+): Promise<CircleTransactionResult | null> {
+  const response = await fetch(`${CIRCLE_API_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    cache: "no-store",
+  });
+
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Circle transaction lookup failed (${response.status}): ${body}`,
+    );
+  }
+
+  const payload = (await response.json()) as {
+    data?: Record<string, unknown>;
+  };
+  const data = payload.data ?? {};
+  const id = String(
+    data.id ??
+      data.transactionId ??
+      data.transaction_id ??
+      data.refId ??
+      "unknown",
+  );
+
+  return {
+    id,
+    state:
+      typeof data.state === "string"
+        ? data.state
+        : typeof data.status === "string"
+          ? data.status
+          : undefined,
+    txHash:
+      typeof data.txHash === "string"
+        ? data.txHash
+        : typeof data.transactionHash === "string"
+          ? data.transactionHash
+          : typeof data.blockchainTxHash === "string"
+            ? data.blockchainTxHash
+            : undefined,
+    blockchain:
+      typeof data.blockchain === "string" ? data.blockchain : undefined,
+    errorReason:
+      typeof data.errorReason === "string"
+        ? data.errorReason
+        : typeof data.errorMessage === "string"
+          ? data.errorMessage
+          : undefined,
+    raw: data,
+  };
+}
+
+export async function getCircleTransaction(args: {
+  transactionId: string;
+}): Promise<CircleTransactionResult> {
+  const config = getCircleConfigFromEnv();
+  const candidates = [
+    `/transactions/${args.transactionId}`,
+    `/developer/transactions/${args.transactionId}`,
+    `/developer/transactions/contractExecution/${args.transactionId}`,
+  ];
+
+  for (const path of candidates) {
+    const transaction = await tryGetCircleTransaction(config.apiKey, path);
+    if (transaction) return transaction;
+  }
+
+  throw new Error(`Circle transaction not found: ${args.transactionId}`);
 }
 
 export async function createOrGetCircleWalletForUser(
   convex: ConvexHttpClient,
   userId: Id<"users">,
+  chainKey: SupportedChainKey = DEFAULT_CHAIN_KEY,
 ) {
   const serviceToken = getConvexServiceToken();
-  const existing = await convex.query(api.wallets.getByUser, {
+  const existing = await convex.query(api.wallets.getByUserAndChain, {
     userId,
+    chainKey,
     serviceToken,
   });
   if (existing) {
     return {
       walletId: existing.walletId,
       walletAddress: existing.walletAddress,
+      chainKey: existing.chainKey,
       blockchain: existing.blockchain,
     };
   }
 
   const config = getCircleConfigFromEnv();
   const walletSetId = getWalletSetIdFromEnv();
-  const wallets = await createWallets(config, walletSetId, 1, "MONAD-TESTNET");
+  const wallets = await createWallets(
+    config,
+    walletSetId,
+    1,
+    getCircleBlockchain(chainKey),
+  );
   const created = wallets?.[0];
   if (!created?.id || !created?.address) {
     throw new Error("Circle did not return a wallet");
@@ -203,40 +317,57 @@ export async function createOrGetCircleWalletForUser(
     userId,
     walletId: created.id,
     walletAddress: created.address,
-    blockchain: created.blockchain ?? "MONAD-TESTNET",
+    chainKey,
+    blockchain: created.blockchain ?? getCircleBlockchain(chainKey),
     serviceToken,
   });
 
   return {
     walletId: created.id,
     walletAddress: created.address,
-    blockchain: created.blockchain ?? "MONAD-TESTNET",
+    chainKey,
+    blockchain: created.blockchain ?? getCircleBlockchain(chainKey),
   };
 }
 
 export async function executeBuyTicketWithCircleWallet(args: {
   walletId: string;
+  chainKey: SupportedChainKey;
   onChainEventId: number;
   priceUsdc: number;
   mode?: "buy_ticket" | "create_event";
   eventName?: string;
   maxTickets?: number;
+  idempotencyKey?: string;
 }) {
   const config = getCircleConfigFromEnv();
+  const contractAddress = getConfiguredBuddyEventsAddress(args.chainKey);
+  const usdcAddress = getUsdcAddressForChain(args.chainKey);
+  const blockchain = getCircleBlockchain(args.chainKey);
 
   if (args.mode === "create_event") {
     const createTx = await createContractExecutionTransaction(config, {
       walletId: args.walletId,
-      contractAddress: BUDDY_EVENTS_ADDRESS,
+      blockchain,
+      contractAddress,
       abiFunctionSignature: "createEvent(string,uint256,uint256)",
       abiParameters: [
         args.eventName ?? `Telegram Event ${Date.now()}`,
         Math.floor(args.priceUsdc * 1_000_000),
         args.maxTickets ?? 100,
       ],
+      idempotencyKey: args.idempotencyKey,
     });
     return {
-      txHash: (createTx.transactionId ?? createTx.id ?? "") as string,
+      txHash: (createTx.txHash ??
+        createTx.transactionHash ??
+        createTx.transactionId ??
+        createTx.id ??
+        "") as string,
+      transactionId: (createTx.transactionId ?? createTx.id ?? undefined) as
+        | string
+        | undefined,
+      state: createTx.state,
       onChainEventId: undefined as number | undefined,
     };
   }
@@ -245,21 +376,35 @@ export async function executeBuyTicketWithCircleWallet(args: {
   if (usdcUnits > 0) {
     await createContractExecutionTransaction(config, {
       walletId: args.walletId,
-      contractAddress: MONAD_USDC_TESTNET,
+      blockchain,
+      contractAddress: usdcAddress,
       abiFunctionSignature: "approve(address,uint256)",
-      abiParameters: [BUDDY_EVENTS_ADDRESS, usdcUnits],
+      abiParameters: [contractAddress, usdcUnits],
+      idempotencyKey: args.idempotencyKey
+        ? `${args.idempotencyKey}:approve`
+        : undefined,
     });
   }
 
   const buyTx = await createContractExecutionTransaction(config, {
     walletId: args.walletId,
-    contractAddress: BUDDY_EVENTS_ADDRESS,
+    blockchain,
+    contractAddress,
     abiFunctionSignature: "buyTicket(uint256)",
     abiParameters: [args.onChainEventId],
+    idempotencyKey: args.idempotencyKey,
   });
 
   return {
-    txHash: (buyTx.transactionId ?? buyTx.id ?? "") as string,
+    txHash: (buyTx.txHash ??
+      buyTx.transactionHash ??
+      buyTx.transactionId ??
+      buyTx.id ??
+      "") as string,
+    transactionId: (buyTx.transactionId ?? buyTx.id ?? undefined) as
+      | string
+      | undefined,
+    state: buyTx.state,
   };
 }
 

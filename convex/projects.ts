@@ -33,7 +33,9 @@ export const listByFoundation = query({
   handler: async (ctx, args) => {
     return await ctx.db
       .query("projects")
-      .withIndex("by_foundation", (q) => q.eq("foundationId", args.foundationId))
+      .withIndex("by_foundation", (q) =>
+        q.eq("foundationId", args.foundationId),
+      )
       .collect();
   },
 });
@@ -80,7 +82,8 @@ export const update = mutation({
     const patch: Record<string, unknown> = {};
     if (args.name !== undefined) patch.name = args.name;
     if (args.description !== undefined) patch.description = args.description;
-    if (args.walletAddress !== undefined) patch.walletAddress = args.walletAddress;
+    if (args.walletAddress !== undefined)
+      patch.walletAddress = args.walletAddress;
     if (args.status !== undefined) patch.status = args.status;
 
     await ctx.db.patch(args.id, patch);

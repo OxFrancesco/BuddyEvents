@@ -3,11 +3,13 @@
 This file is the canonical end-to-end test guide for BuddyEvents.
 
 It validates all key features:
+
 - Smart contracts (events + NFT tickets + marketplace)
 - Convex backend (schema + CRUD)
 - Next.js frontend flows
 - x402 dynamic ticket payments on Monad
-- Go CLI agent flows (Pi-compatible)
+- Effect TypeScript CLI agent flows (Pi-compatible)
+- Durable workflow worker + reconciliation
 - Circle wallet integration paths
 
 ---
@@ -15,7 +17,6 @@ It validates all key features:
 ## 0) Prerequisites
 
 - Bun installed
-- Go installed
 - Foundry installed (`forge`, `cast`)
 - A Convex deployment URL
 - Monad testnet wallet + funds
@@ -28,6 +29,7 @@ cp .env.example .env.local
 ```
 
 Set at least:
+
 - `NEXT_PUBLIC_CONVEX_URL`
 - `PAY_TO_ADDRESS`
 - `NEXT_PUBLIC_BUDDY_EVENTS_CONTRACT` (after deploy)
@@ -40,12 +42,13 @@ Set at least:
 
 ```bash
 bun install
-cd cli && go mod tidy && go build -o buddyevents . && cd ..
+bun run test
 ```
 
 Expected:
+
 - Bun install completes
-- CLI binary builds with no errors
+- Vitest suite passes
 
 ---
 
@@ -56,17 +59,20 @@ Run these before runtime tests:
 ```bash
 bun run lint
 npx tsc --noEmit --skipLibCheck
+bun run test
 bun run build
-cd cli && go build ./... && cd ..
+bun run cli -- --help >/dev/null
 cd contracts && forge test && cd ..
 ```
 
 Expected:
+
 - Lint: clean
 - TS typecheck: clean
+- Vitest: clean
 - Next build: success
-- Go build: success
-- Forge tests: `10 passed`
+- CLI help renders
+- Forge tests: `15 passed`
 
 ---
 
@@ -103,12 +109,11 @@ forge script script/Deploy.s.sol:DeployScript \
 If using the BuddyEvents CLI wallet instead of a standalone key:
 
 ```bash
-cd cli
-./buddyevents wallet setup
-./buddyevents wallet fund
-./buddyevents wallet balance
-export PRIVATE_KEY=$(jq -r '.private_key' ~/.buddyevents/config.json)
-cd ../contracts
+bun run cli -- wallet setup
+bun run cli -- wallet fund
+bun run cli -- wallet balance
+export PRIVATE_KEY=$(jq -r '.privateKey' ~/.buddyevents/config.json)
+cd contracts
 forge script script/Deploy.s.sol:DeployScript \
   --rpc-url https://testnet-rpc.monad.xyz \
   --private-key "$PRIVATE_KEY" \
@@ -116,8 +121,9 @@ forge script script/Deploy.s.sol:DeployScript \
 ```
 
 Copy deployed address into:
+
 - `.env.local` as `NEXT_PUBLIC_BUDDY_EVENTS_CONTRACT`
-- `~/.buddyevents/config.json` as `contract_address`
+- `~/.buddyevents/config.json` as `contractAddress`
 
 ### 3.3 Verify deployed contract (API-first)
 
@@ -163,6 +169,7 @@ curl -X POST https://agents.devnads.com/v1/verify \
 ```
 
 Expected:
+
 - HTTP success response from verification API
 - Contract appears verified on Monad explorers after indexing delay
 
@@ -184,10 +191,18 @@ From repo root:
 bun run dev
 ```
 
+In a second terminal, run the durable workflow worker:
+
+```bash
+bun run worker
+```
+
 Open:
+
 - `http://localhost:3000`
 
 Expected:
+
 - Landing page renders
 - Events list section visible
 - Wallet connect buttons visible
@@ -210,6 +225,7 @@ curl -X POST http://localhost:3000/api/teams \
 ```
 
 Expected:
+
 - JSON includes `teamId`
 
 ### 5.2 Create an event
@@ -231,6 +247,7 @@ curl -X POST http://localhost:3000/api/events \
 ```
 
 Expected:
+
 - JSON includes `eventId`
 
 ### 5.3 List events
@@ -240,6 +257,7 @@ curl "http://localhost:3000/api/events?status=active"
 ```
 
 Expected:
+
 - `events` array contains created event
 
 ---
@@ -247,6 +265,7 @@ Expected:
 ## 6) Frontend Feature Tests
 
 ## 6.1 Browse events
+
 1. Go to `/events`
 2. Verify cards render with:
    - Event name
@@ -255,12 +274,14 @@ Expected:
    - Spots left
 
 ## 6.2 Create event UI
+
 1. Go to `/create`
 2. Fill required fields
 3. Submit
 4. Verify redirect to `/events/[id]`
 
 ## 6.3 Event detail + buy flow
+
 1. Open an event detail page
 2. Connect wallet
 3. Click `Approve & Buy` (paid event)
@@ -268,10 +289,12 @@ Expected:
 5. Click `Confirm Purchase` when prompted
 
 Expected:
+
 - Success state shown
 - Ticket appears in `/tickets`
 
 ## 6.4 My tickets
+
 1. Go to `/tickets`
 2. Verify purchased tickets appear with:
    - Event name
@@ -292,20 +315,25 @@ curl -i "http://localhost:3000/api/events/REPLACE_EVENT_ID/buy?buyer=0x222222222
 ```
 
 Expected:
+
 - HTTP `402`
 - Payment requirement headers present
 - Amount reflects the event's configured `price`
 
 ### 7.2 Free event bypass
+
 1. Create event with `price: 0`
 2. Call the same buy endpoint without payment
 
 Expected:
+
 - HTTP `200`
 - Message `Free ticket granted`
 
 ### 7.3 Settlement hash persistence
+
 After successful paid purchase:
+
 1. Check response JSON includes `txHash`
 2. Open `/tickets` and verify tx hash is persisted on ticket record
 
@@ -315,47 +343,49 @@ After successful paid purchase:
 
 All commands are non-interactive and can be run by Pi via Bash.
 
-From `cli/`:
+From repo root:
 
 ```bash
-./buddyevents wallet setup
-./buddyevents wallet fund
-./buddyevents wallet balance
-./buddyevents agent register --name "AgentA" --owner 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-./buddyevents events list
+bun run cli -- wallet setup
+bun run cli -- wallet fund
+bun run cli -- wallet balance
+bun run cli -- agent register --name "AgentA" --owner 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bun run cli -- events list
+bun run cli -- workflow list
 ```
 
 ### 8.1 x402 CLI buy (critical)
 
 ```bash
-./buddyevents tickets buy --event-id REPLACE_EVENT_ID
+bun run cli -- tickets buy --event-id REPLACE_EVENT_ID
 ```
 
 Expected:
+
 - CLI performs x402 402->pay->retry flow
-- Outputs:
-  - `Ticket purchased!`
-  - `Ticket ID: ...`
-  - `Settlement Tx: 0x...`
+- Output includes a durable `workflowId`
+- Ticket and QR metadata are returned once fulfillment completes
 
 ### 8.2 Direct on-chain buy path
 
 ```bash
-./buddyevents tickets buy --on-chain-id 0
+bun run cli -- tickets buy --event-id REPLACE_EVENT_ID --on-chain-id 0
 ```
 
 Expected:
-- `approve` tx sent
+
 - `buyTicket` tx sent
-- Success output
+- `/api/purchases/confirm` is invoked automatically
+- Output includes `workflowId` and eventual ticket sync metadata
 
 ### 8.3 Resale flow
 
 ```bash
-./buddyevents tickets sell --token-id 0 --price 15000
+bun run cli -- tickets sell --token-id 0 --price 15000
 ```
 
 Expected:
+
 - Ticket listed on contract marketplace
 - Tx hash printed
 
@@ -364,19 +394,26 @@ Expected:
 ## 9) Circle Wallet Integration Tests
 
 Use these only if Circle credentials are set:
+
 - `CIRCLE_API_KEY`
 - `CIRCLE_ENTITY_SECRET_CIPHERTEXT`
 
 ### 9.1 Validate wallet set creation
+
 Call helper in `lib/circle.ts` from a node script or app route and verify:
+
 - wallet set id returned
 
 ### 9.2 Create Monad wallet(s)
+
 Use `createWallets(...)` and verify:
+
 - wallet addresses returned
 
 ### 9.3 Transfer test
+
 Use `transferTokens(...)` and verify:
+
 - transfer id or tx reference returned
 
 ---
@@ -385,8 +422,10 @@ Use `transferTokens(...)` and verify:
 
 - [ ] `bun run lint` passes
 - [ ] `npx tsc --noEmit --skipLibCheck` passes
+- [ ] `bun run test` passes
 - [ ] `bun run build` passes
-- [ ] `cd cli && go build ./...` passes
+- [ ] `bun run cli -- --help >/dev/null` passes
+- [ ] `bun run worker` can claim and execute workflows
 - [ ] `cd contracts && forge test` passes
 - [ ] Paid x402 purchase returns real settlement tx hash
 - [ ] Free event buy bypasses payment correctly
@@ -433,6 +472,7 @@ bun run dev
 ```
 
 Expected:
+
 - Next route `/api/telegram/webhook` is reachable from your public domain.
 - Route `/telegram` loads in browser (and in Telegram WebApp context).
 
@@ -447,6 +487,7 @@ From repo root:
 ```
 
 Expected from `get-webhook.sh`:
+
 - `url` equals `https://<your-domain>/api/telegram/webhook`
 - `pending_update_count` is low/zero
 - `last_error_message` is empty
@@ -466,6 +507,7 @@ In Telegram chat with your bot:
 3. Send `/tickets`
 
 Expected:
+
 - Bot replies with `OK:` or `ERROR:` response envelope.
 - `/start` message includes Mini App button when `NEXT_PUBLIC_TELEGRAM_MINIAPP_URL` is set.
 
@@ -478,6 +520,7 @@ Expected:
 5. Run `Find Tickets`
 
 Expected:
+
 - `Signed in` indicates `/api/telegram/auth/start` succeeded.
 - Wallet card shows an address after connect.
 - Agent Output shows JSON result per action.
@@ -489,6 +532,7 @@ Expected:
 3. Copy resulting ticket ID and run `/qr <ticketId>` or QR panel input
 
 Expected:
+
 - Buy response contains `txHash`
 - QR token is generated and renders as QR code
 

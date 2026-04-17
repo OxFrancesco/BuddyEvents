@@ -6,11 +6,24 @@ import {
   mutation,
   internalMutation,
   type MutationCtx,
-  type QueryCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { v, type Infer } from "convex/values";
-import { requireSignedInUserOrService } from "./lib/auth";
+import {
+  requireServiceAccess,
+  requireSignedInUser,
+  requireSignedInUserOrService,
+} from "./lib/auth";
+import {
+  chainIdValidator,
+  chainKeyValidator,
+  withDefaultTicketChain,
+} from "./lib/chains";
+import {
+  listOwnedWalletAddresses,
+  resolveUserByAnyWalletAddress,
+  userOwnsAddress,
+} from "./lib/walletOwnership";
 
 const ticketStatusValidator = v.union(
   v.literal("active"),
@@ -19,14 +32,28 @@ const ticketStatusValidator = v.union(
   v.literal("refunded"),
 );
 
+const purchaseSourceValidator = v.union(
+  v.literal("wallet"),
+  v.literal("x402"),
+  v.literal("telegram"),
+  v.literal("pi"),
+  v.literal("free"),
+  v.literal("reconcile"),
+);
+
 const ticketListItemValidator = v.object({
   _id: v.id("tickets"),
   _creationTime: v.number(),
   eventId: v.id("events"),
   tokenId: v.optional(v.number()),
+  chainKey: chainKeyValidator,
+  chainId: chainIdValidator,
+  contractAddress: v.optional(v.string()),
   buyerAddress: v.string(),
   buyerAgentId: v.optional(v.string()),
   purchasePrice: v.number(),
+  purchaseSource: v.optional(purchaseSourceValidator),
+  purchaseReference: v.optional(v.string()),
   txHash: v.string(),
   qrCode: v.string(),
   checkedInAt: v.optional(v.number()),
@@ -53,6 +80,20 @@ const scanResultValidator = v.object({
   checkedInAt: v.optional(v.number()),
 });
 type ScanResult = Infer<typeof scanResultValidator>;
+
+function normalizeTicketRecord(
+  ticket: Doc<"tickets">,
+  event?: Pick<
+    Doc<"events">,
+    "chainKey" | "chainId" | "contractAddress"
+  > | null,
+) {
+  const normalized = withDefaultTicketChain(ticket, event);
+  return {
+    ...normalized,
+    contractAddress: ticket.contractAddress ?? event?.contractAddress,
+  };
+}
 
 async function generateUniqueQrCode(ctx: MutationCtx): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -86,10 +127,7 @@ async function issueTicketQrToken(
   const now = Date.now();
   const expiresAt = now + (args.ttlMs ?? 1000 * 60 * 60 * 24);
 
-  const ownerUser = await ctx.db
-    .query("users")
-    .withIndex("by_wallet", (q) => q.eq("walletAddress", args.buyerAddress))
-    .unique();
+  const ownerUser = await resolveUserByAnyWalletAddress(ctx, args.buyerAddress);
 
   const token = `be_qr_${crypto.randomUUID()}`;
   const tokenHash = await sha256Hex(token);
@@ -98,32 +136,13 @@ async function issueTicketQrToken(
     ticketId: args.ticketId,
     eventId: args.eventId,
     userId: ownerUser?._id,
+    token,
     tokenHash,
     expiresAt,
     issuedAt: now,
   });
 
   return { token, expiresAt };
-}
-
-function isSameAddress(a: string | undefined, b: string): boolean {
-  if (!a) return false;
-  return a.toLowerCase() === b.toLowerCase();
-}
-
-async function userOwnsAddress(
-  ctx: MutationCtx | QueryCtx,
-  user: Doc<"users">,
-  address: string,
-): Promise<boolean> {
-  if (isSameAddress(user.walletAddress, address)) return true;
-
-  const wallets = await ctx.db
-    .query("wallets")
-    .withIndex("by_user", (q) => q.eq("userId", user._id))
-    .collect();
-
-  return wallets.some((wallet) => isSameAddress(wallet.walletAddress, address));
 }
 
 // ========== Queries ==========
@@ -140,10 +159,12 @@ export const listByEvent = query({
       throw new Error("Admin access required");
     }
 
-    return await ctx.db
+    const tickets = await ctx.db
       .query("tickets")
       .withIndex("by_event", (q) => q.eq("eventId", args.eventId))
       .collect();
+    const event = await ctx.db.get(args.eventId);
+    return tickets.map((ticket) => normalizeTicketRecord(ticket, event));
   },
 });
 
@@ -153,7 +174,7 @@ export const listByBuyer = query({
     serviceToken: v.optional(v.string()),
   },
   returns: v.array(ticketListItemValidator),
-  handler: async (ctx, args): Promise<Array<Doc<"tickets">>> => {
+  handler: async (ctx, args) => {
     const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
     if (
       actor &&
@@ -163,10 +184,62 @@ export const listByBuyer = query({
       throw new Error("Forbidden");
     }
 
-    return await ctx.db
+    const tickets = await ctx.db
       .query("tickets")
       .withIndex("by_buyer", (q) => q.eq("buyerAddress", args.buyerAddress))
       .collect();
+    const events = await Promise.all(
+      Array.from(new Set(tickets.map((ticket) => ticket.eventId))).map((id) =>
+        ctx.db.get(id),
+      ),
+    );
+    const eventsById = new Map(
+      events
+        .filter((event): event is Doc<"events"> => event !== null)
+        .map((event) => [event._id, event]),
+    );
+
+    return tickets.map((ticket) =>
+      normalizeTicketRecord(ticket, eventsById.get(ticket.eventId)),
+    );
+  },
+});
+
+export const listMine = query({
+  args: {},
+  returns: v.array(ticketListItemValidator),
+  handler: async (ctx) => {
+    const actor = await requireSignedInUser(ctx);
+    const ownedAddresses = await listOwnedWalletAddresses(ctx, actor);
+    const ticketsById = new Map<Id<"tickets">, Doc<"tickets">>();
+
+    for (const address of ownedAddresses) {
+      const tickets = await ctx.db
+        .query("tickets")
+        .withIndex("by_buyer", (q) => q.eq("buyerAddress", address))
+        .collect();
+      for (const ticket of tickets) {
+        ticketsById.set(ticket._id, ticket);
+      }
+    }
+
+    const tickets = Array.from(ticketsById.values()).sort(
+      (a, b) => b._creationTime - a._creationTime,
+    );
+    const events = await Promise.all(
+      Array.from(new Set(tickets.map((ticket) => ticket.eventId))).map((id) =>
+        ctx.db.get(id),
+      ),
+    );
+    const eventsById = new Map(
+      events
+        .filter((event): event is Doc<"events"> => event !== null)
+        .map((event) => [event._id, event]),
+    );
+
+    return tickets.map((ticket) =>
+      normalizeTicketRecord(ticket, eventsById.get(ticket.eventId)),
+    );
   },
 });
 
@@ -181,9 +254,12 @@ export const get = query({
     const ticket = await ctx.db.get(args.id);
     if (!ticket) return null;
 
-    if (!actor || actor.role === "admin") return ticket;
+    const event = await ctx.db.get(ticket.eventId);
+    const normalizedTicket = normalizeTicketRecord(ticket, event);
+
+    if (!actor || actor.role === "admin") return normalizedTicket;
     if (await userOwnsAddress(ctx, actor, ticket.buyerAddress)) {
-      return ticket;
+      return normalizedTicket;
     }
     throw new Error("Forbidden");
   },
@@ -198,6 +274,8 @@ export const recordPurchase = mutation({
     buyerAddress: v.string(),
     buyerAgentId: v.optional(v.string()),
     purchasePrice: v.number(),
+    purchaseSource: v.optional(purchaseSourceValidator),
+    purchaseReference: v.optional(v.string()),
     txHash: v.string(),
     serviceToken: v.optional(v.string()),
   },
@@ -215,6 +293,8 @@ export const recordPurchaseAndIssueQr = mutation({
     buyerAddress: v.string(),
     buyerAgentId: v.optional(v.string()),
     purchasePrice: v.number(),
+    purchaseSource: v.optional(purchaseSourceValidator),
+    purchaseReference: v.optional(v.string()),
     txHash: v.string(),
     serviceToken: v.optional(v.string()),
   },
@@ -236,52 +316,54 @@ async function recordPurchaseWithQrToken(
     buyerAddress: string;
     buyerAgentId?: string;
     purchasePrice: number;
+    purchaseSource?: Infer<typeof purchaseSourceValidator>;
+    purchaseReference?: string;
     txHash: string;
     serviceToken?: string;
   },
 ) {
-    const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
-    const buyerAddress = args.buyerAddress.trim();
-    if (!buyerAddress) throw new Error("buyerAddress is required");
+  const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
+  const buyerAddress = args.buyerAddress.trim();
+  if (!buyerAddress) throw new Error("buyerAddress is required");
 
-    if (
-      actor &&
-      actor.role !== "admin" &&
-      !(await userOwnsAddress(ctx, actor, buyerAddress))
-    ) {
-      throw new Error("buyerAddress does not match caller wallet");
-    }
+  if (
+    actor &&
+    actor.role !== "admin" &&
+    !(await userOwnsAddress(ctx, actor, buyerAddress))
+  ) {
+    throw new Error("buyerAddress does not match caller wallet");
+  }
 
-    const event = await ctx.db.get(args.eventId);
-    if (!event) throw new Error("Event not found");
-    if (event.status !== "active") throw new Error("Event not active");
-    if (event.ticketsSold >= event.maxTickets) throw new Error("Sold out");
+  const purchaseReference = (args.purchaseReference ?? args.txHash).trim();
+  if (!purchaseReference) {
+    throw new Error("purchaseReference is required");
+  }
 
-    // Increment tickets sold
-    await ctx.db.patch(args.eventId, {
-      ticketsSold: event.ticketsSold + 1,
-    });
+  const loadExistingResult = async (ticketId: Id<"tickets">) => {
+    const ticket = await ctx.db.get(ticketId);
+    if (!ticket) throw new Error("Ticket not found");
 
-    const ticketId = await ctx.db.insert("tickets", {
-      eventId: args.eventId,
-      tokenId: args.tokenId,
-      buyerAddress,
-      buyerAgentId: args.buyerAgentId,
-      purchasePrice: event.price,
-      txHash: args.txHash,
-      qrCode: await generateUniqueQrCode(ctx),
-      checkedInAt: undefined,
-      checkedInBy: undefined,
-      status: "active" as const,
-    });
+    const now = Date.now();
+    const activeToken = (
+      await ctx.db
+        .query("ticketQrTokens")
+        .withIndex("by_ticket", (q) => q.eq("ticketId", ticketId))
+        .collect()
+    )
+      .filter((token) => token.revokedAt === undefined && token.expiresAt > now)
+      .sort((a, b) => b.issuedAt - a.issuedAt)[0];
 
-    const qr = await issueTicketQrToken(ctx, {
-      ticketId,
-      eventId: args.eventId,
-      buyerAddress,
-    });
+    const qr = activeToken?.token
+      ? {
+          token: activeToken.token,
+          expiresAt: activeToken.expiresAt,
+        }
+      : await issueTicketQrToken(ctx, {
+          ticketId,
+          eventId: ticket.eventId,
+          buyerAddress: ticket.buyerAddress,
+        });
 
-    // Keep legacy ticket.qrCode in sync while the app migrates to tokenized QR.
     await ctx.db.patch(ticketId, { qrCode: qr.token });
 
     return {
@@ -289,7 +371,138 @@ async function recordPurchaseWithQrToken(
       qrToken: qr.token,
       qrTokenExpiresAt: qr.expiresAt,
     };
+  };
+
+  const existingByPurchaseReference = await ctx.db
+    .query("tickets")
+    .withIndex("by_purchase_reference", (q) =>
+      q.eq("purchaseReference", purchaseReference),
+    )
+    .unique();
+
+  if (existingByPurchaseReference) {
+    return await loadExistingResult(existingByPurchaseReference._id);
+  }
+
+  if (args.txHash) {
+    const existingByTxHash = await ctx.db
+      .query("tickets")
+      .withIndex("by_tx_hash", (q) => q.eq("txHash", args.txHash))
+      .unique();
+    if (existingByTxHash) {
+      return await loadExistingResult(existingByTxHash._id);
+    }
+  }
+
+  const event = await ctx.db.get(args.eventId);
+  if (!event) throw new Error("Event not found");
+  if (event.status !== "active") throw new Error("Event not active");
+  if (event.ticketsSold >= event.maxTickets) throw new Error("Sold out");
+
+  await ctx.db.patch(args.eventId, {
+    ticketsSold: event.ticketsSold + 1,
+  });
+
+  const ticketId = await ctx.db.insert("tickets", {
+    eventId: args.eventId,
+    tokenId: args.tokenId,
+    chainKey: event.chainKey ?? "monadTestnet",
+    chainId: event.chainId ?? 10143,
+    contractAddress: event.contractAddress,
+    buyerAddress,
+    buyerAgentId: args.buyerAgentId,
+    purchasePrice: Number.isFinite(args.purchasePrice)
+      ? args.purchasePrice
+      : event.price,
+    purchaseSource: args.purchaseSource,
+    purchaseReference,
+    txHash: args.txHash,
+    qrCode: await generateUniqueQrCode(ctx),
+    checkedInAt: undefined,
+    checkedInBy: undefined,
+    status: "active" as const,
+  });
+
+  const qr = await issueTicketQrToken(ctx, {
+    ticketId,
+    eventId: args.eventId,
+    buyerAddress,
+  });
+
+  await ctx.db.patch(ticketId, { qrCode: qr.token });
+
+  return {
+    ticketId,
+    qrToken: qr.token,
+    qrTokenExpiresAt: qr.expiresAt,
+  };
 }
+
+export const backfillChainMetadata = internalMutation({
+  args: {},
+  returns: v.object({
+    updated: v.number(),
+  }),
+  handler: async (ctx) => {
+    const tickets = await ctx.db.query("tickets").collect();
+    let updated = 0;
+
+    for (const ticket of tickets) {
+      if (
+        ticket.chainKey &&
+        ticket.chainId &&
+        ticket.contractAddress !== undefined
+      ) {
+        continue;
+      }
+      const event = await ctx.db.get(ticket.eventId);
+      if (!event) continue;
+      const normalized = normalizeTicketRecord(ticket, event);
+      await ctx.db.patch(ticket._id, {
+        chainKey: normalized.chainKey,
+        chainId: normalized.chainId,
+        contractAddress: normalized.contractAddress,
+      });
+      updated += 1;
+    }
+
+    return { updated };
+  },
+});
+
+export const backfillChainMetadataService = mutation({
+  args: {
+    serviceToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireServiceAccess(args.serviceToken);
+    const tickets = await ctx.db.query("tickets").collect();
+    let updated = 0;
+
+    for (const ticket of tickets) {
+      if (
+        ticket.chainKey &&
+        ticket.chainId &&
+        ticket.contractAddress !== undefined
+      ) {
+        continue;
+      }
+
+      const event = await ctx.db.get(ticket.eventId);
+      if (!event) continue;
+
+      const normalized = withDefaultTicketChain(ticket, event);
+      await ctx.db.patch(ticket._id, {
+        chainKey: normalized.chainKey,
+        chainId: normalized.chainId,
+        contractAddress: normalized.contractAddress,
+      });
+      updated += 1;
+    }
+
+    return { updated };
+  },
+});
 
 export const scanForCheckIn = mutation({
   args: {
@@ -302,16 +515,10 @@ export const scanForCheckIn = mutation({
     const actor = await requireSignedInUserOrService(ctx, args.serviceToken);
 
     const organizerCandidates = new Set<string>();
-    if (actor?.walletAddress) {
-      organizerCandidates.add(actor.walletAddress.toLowerCase());
-    }
     if (actor) {
-      const wallets = await ctx.db
-        .query("wallets")
-        .withIndex("by_user", (q) => q.eq("userId", actor._id))
-        .collect();
-      for (const wallet of wallets) {
-        organizerCandidates.add(wallet.walletAddress.toLowerCase());
+      const addresses = await listOwnedWalletAddresses(ctx, actor);
+      for (const walletAddress of addresses) {
+        organizerCandidates.add(walletAddress.toLowerCase());
       }
     } else {
       const organizerAddress = args.organizerAddress?.trim();
@@ -349,13 +556,17 @@ export const scanForCheckIn = mutation({
     let isAuthorized = actor?.role === "admin";
 
     if (!isAuthorized) {
-      isAuthorized = organizerCandidates.has(event.creatorAddress.toLowerCase());
+      isAuthorized = organizerCandidates.has(
+        event.creatorAddress.toLowerCase(),
+      );
     }
 
     if (!isAuthorized && event.teamId) {
       const team = await ctx.db.get(event.teamId);
       if (team) {
-        isAuthorized = organizerCandidates.has(team.walletAddress.toLowerCase());
+        isAuthorized = organizerCandidates.has(
+          team.walletAddress.toLowerCase(),
+        );
         if (!isAuthorized) {
           isAuthorized = team.members.some((member) =>
             organizerCandidates.has(member.toLowerCase()),
@@ -400,7 +611,11 @@ export const scanForCheckIn = mutation({
     }
 
     const checkedInAt = Date.now();
-    const checkedInBy = actor?.walletAddress ?? actor?._id ?? args.organizerAddress;
+    const ownedAddresses = actor
+      ? await listOwnedWalletAddresses(ctx, actor)
+      : [];
+    const checkedInBy =
+      ownedAddresses[0] ?? actor?._id ?? args.organizerAddress;
     await ctx.db.patch(ticket._id, {
       checkedInAt,
       checkedInBy,
