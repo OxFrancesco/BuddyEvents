@@ -72,7 +72,10 @@ export const issueForTicket = mutation({
     }
 
     if (actor) {
-      if (actor.role !== "admin" && !(await userOwnsTicket(ctx, actor, ticket))) {
+      if (
+        actor.role !== "admin" &&
+        !(await userOwnsTicket(ctx, actor, ticket))
+      ) {
         throw new Error("Forbidden");
       }
       if (args.userId !== undefined && args.userId !== actor._id) {
@@ -141,8 +144,9 @@ export const getActiveByTicket = query({
       .withIndex("by_ticket", (q) => q.eq("ticketId", args.ticketId))
       .collect();
     return (
-      all.find((token) => token.revokedAt === undefined && token.expiresAt > now) ??
-      null
+      all.find(
+        (token) => token.revokedAt === undefined && token.expiresAt > now,
+      ) ?? null
     );
   },
 });
@@ -168,7 +172,9 @@ export const listActiveByTickets = query({
           .withIndex("by_ticket", (q) => q.eq("ticketId", ticketId))
           .collect();
         const active = tokens
-          .filter((token) => token.revokedAt === undefined && token.expiresAt > now)
+          .filter(
+            (token) => token.revokedAt === undefined && token.expiresAt > now,
+          )
           .sort((a, b) => b.issuedAt - a.issuedAt)[0];
         return active
           ? {
@@ -181,7 +187,9 @@ export const listActiveByTickets = query({
       }),
     );
 
-    return results.filter((value): value is NonNullable<typeof value> => value !== null);
+    return results.filter(
+      (value): value is NonNullable<typeof value> => value !== null,
+    );
   },
 });
 

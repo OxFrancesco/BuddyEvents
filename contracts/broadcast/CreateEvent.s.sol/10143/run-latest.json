@@ -6,11 +6,7 @@
       "contractName": null,
       "contractAddress": "0x0dfbe218112972cc12fe004eae7ceed34c07b84d",
       "function": "createEvent(string,uint256,uint256)",
-      "arguments": [
-        "Francesco\\'s participation!",
-        "0",
-        "100"
-      ],
+      "arguments": ["Francesco\\'s participation!", "0", "100"],
       "transaction": {
         "from": "0x4bc9032805a54da5b9670631fef99d59e83a8c4f",
         "to": "0x0dfbe218112972cc12fe004eae7ceed34c07b84d",

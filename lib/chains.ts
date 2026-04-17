@@ -80,13 +80,19 @@ export const CHAIN_CONFIGS: Record<SupportedChainKey, ChainConfig> = {
   },
 };
 
-export const SUPPORTED_CHAINS = supportedChainKeys.map((key) => CHAIN_CONFIGS[key]);
+export const SUPPORTED_CHAINS = supportedChainKeys.map(
+  (key) => CHAIN_CONFIGS[key],
+);
 
-export function isSupportedChainKey(value: unknown): value is SupportedChainKey {
+export function isSupportedChainKey(
+  value: unknown,
+): value is SupportedChainKey {
   return typeof value === "string" && value in CHAIN_CONFIGS;
 }
 
-export function normalizeSupportedChainKey(value?: string | null): SupportedChainKey {
+export function normalizeSupportedChainKey(
+  value?: string | null,
+): SupportedChainKey {
   if (value && isSupportedChainKey(value)) {
     return value;
   }
@@ -111,7 +117,9 @@ export function getPublicRpcUrl(chainKey: SupportedChainKey) {
   const chain = getChainConfig(chainKey);
   const primary = process.env[chain.rpcEnvVar]?.trim();
   if (primary) return primary;
-  const legacy = chain.rpcLegacyEnvVar ? process.env[chain.rpcLegacyEnvVar]?.trim() : undefined;
+  const legacy = chain.rpcLegacyEnvVar
+    ? process.env[chain.rpcLegacyEnvVar]?.trim()
+    : undefined;
   return legacy || chain.defaultRpcUrl;
 }
 
@@ -124,7 +132,8 @@ export function getConfiguredBuddyEventsAddress(
   const legacy = chain.legacyContractEnvVar
     ? process.env[chain.legacyContractEnvVar]?.trim()
     : undefined;
-  return ((legacy || "0x0000000000000000000000000000000000000000") as `0x${string}`);
+  return (legacy ||
+    "0x0000000000000000000000000000000000000000") as `0x${string}`;
 }
 
 export function getDefaultContractAddressForChain(chainKey: SupportedChainKey) {

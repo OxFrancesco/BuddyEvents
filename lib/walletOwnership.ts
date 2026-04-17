@@ -24,7 +24,10 @@ export async function listOwnedAddressesForUser(args: {
 
   const addresses = new Map<string, string>();
   if (args.user.walletAddress) {
-    addresses.set(args.user.walletAddress.toLowerCase(), args.user.walletAddress);
+    addresses.set(
+      args.user.walletAddress.toLowerCase(),
+      args.user.walletAddress,
+    );
   }
   for (const wallet of wallets) {
     addresses.set(wallet.walletAddress.toLowerCase(), wallet.walletAddress);

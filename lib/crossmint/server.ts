@@ -109,7 +109,8 @@ export function getCrossmintServerConfig(): CrossmintServerConfig {
     serverSignerSecret,
     canonicalChain,
     canonicalChainKey: getSupportedChainKeyForCrossmintChain(canonicalChain),
-    clerkJwtTemplate: process.env.CLERK_CROSSMINT_JWT_TEMPLATE?.trim() || "crossmint",
+    clerkJwtTemplate:
+      process.env.CLERK_CROSSMINT_JWT_TEMPLATE?.trim() || "crossmint",
     enableHumanWallet:
       process.env.NEXT_PUBLIC_ENABLE_CROSSMINT_HUMAN_WALLET === "true",
     enableAutomation: process.env.ENABLE_CROSSMINT_AUTOMATION === "true",
@@ -142,7 +143,9 @@ function getCurveForChain(chain: string) {
   return chain === "solana" || chain === "stellar" ? "ed25519" : "secp256k1";
 }
 
-function deriveServerSigner(config: CrossmintServerConfig): ServerSignerDetails {
+function deriveServerSigner(
+  config: CrossmintServerConfig,
+): ServerSignerDetails {
   const apiClient = getCrossmintApiClient();
   const secretBytes = ensureHexSecret(config.serverSignerSecret);
   const curve = getCurveForChain(config.canonicalChain);
@@ -171,7 +174,9 @@ function asCrossmintWalletResponse(value: unknown): CrossmintWalletResponse {
   return value as CrossmintWalletResponse;
 }
 
-function asCrossmintTransactionResponse(value: unknown): CrossmintTransactionResponse {
+function asCrossmintTransactionResponse(
+  value: unknown,
+): CrossmintTransactionResponse {
   if (!value || typeof value !== "object") {
     throw new Error("Crossmint transaction response was empty");
   }
@@ -245,7 +250,10 @@ async function getWalletByPurpose(
   });
 }
 
-async function registerExternalWalletSigner(walletAddress: string, signerAddress: string) {
+async function registerExternalWalletSigner(
+  walletAddress: string,
+  signerAddress: string,
+) {
   const apiClient = getCrossmintApiClient();
   const response = await apiClient.registerSigner(walletAddress as never, {
     chain: getCrossmintServerConfig().canonicalChain as never,
@@ -279,16 +287,25 @@ export async function ensureHumanCrossmintWalletForUser(args: {
     throw new Error("Crossmint human wallet provisioning is disabled");
   }
 
-  const existing = await getWalletByPurpose(args.convex, args.user._id, "human_primary");
+  const existing = await getWalletByPurpose(
+    args.convex,
+    args.user._id,
+    "human_primary",
+  );
   if (existing) {
     if (
       existing.linkedSignerAddress &&
       !sameAddress(existing.linkedSignerAddress, args.signerAddress)
     ) {
       if (!args.forceRelink) {
-        throw new Error("Smart wallet signer mismatch. Confirmation required to relink.");
+        throw new Error(
+          "Smart wallet signer mismatch. Confirmation required to relink.",
+        );
       }
-      await registerExternalWalletSigner(existing.walletAddress, args.signerAddress);
+      await registerExternalWalletSigner(
+        existing.walletAddress,
+        args.signerAddress,
+      );
     }
 
     return await syncWalletRecord({
@@ -364,12 +381,19 @@ export async function ensureAutomationCrossmintWalletForUser(args: {
     throw new Error("Crossmint automation wallet provisioning is disabled");
   }
 
-  const existing = await getWalletByPurpose(args.convex, args.user._id, "automation");
+  const existing = await getWalletByPurpose(
+    args.convex,
+    args.user._id,
+    "automation",
+  );
   if (existing) {
     return existing;
   }
 
-  const alias = getAutomationWalletAlias(args.user.clerkId, config.canonicalChain);
+  const alias = getAutomationWalletAlias(
+    args.user.clerkId,
+    config.canonicalChain,
+  );
   const existingByAlias = await getWalletByAlias(alias);
   if (existingByAlias?.id && existingByAlias.address) {
     return await syncWalletRecord({
@@ -415,7 +439,11 @@ async function getHumanWalletRecordOrThrow(args: {
   convex: ConvexHttpClient;
   userId: Id<"users">;
 }) {
-  const wallet = await getWalletByPurpose(args.convex, args.userId, "human_primary");
+  const wallet = await getWalletByPurpose(
+    args.convex,
+    args.userId,
+    "human_primary",
+  );
   if (!wallet) {
     throw new Error("Crossmint smart wallet not provisioned yet");
   }
@@ -434,13 +462,16 @@ async function createWalletTransaction(args: {
   }>;
 }) {
   const apiClient = getCrossmintApiClient();
-  const response = await apiClient.createTransaction(args.walletAddress as never, {
-    params: {
-      chain: getCrossmintChainForAppChain(args.chainKey) as never,
-      signer: args.signerLocator,
-      calls: args.calls,
+  const response = await apiClient.createTransaction(
+    args.walletAddress as never,
+    {
+      params: {
+        chain: getCrossmintChainForAppChain(args.chainKey) as never,
+        signer: args.signerLocator,
+        calls: args.calls,
+      },
     },
-  });
+  );
   return asCrossmintTransactionResponse(response);
 }
 
@@ -483,7 +514,8 @@ export async function createHumanApproveTransaction(args: {
           functionName: "approve",
           abi: [...ERC20_ABI],
           args: [
-            event.contractAddress ?? getConfiguredBuddyEventsAddress(event.chainKey),
+            event.contractAddress ??
+              getConfiguredBuddyEventsAddress(event.chainKey),
             usdcUnits,
           ],
         },

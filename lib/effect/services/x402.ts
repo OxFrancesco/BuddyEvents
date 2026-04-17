@@ -26,4 +26,3 @@ export const X402ServiceLayer = Layer.succeed(X402ServiceTag, {
         ]),
     ),
 });
-

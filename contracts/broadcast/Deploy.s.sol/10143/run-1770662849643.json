@@ -6,9 +6,7 @@
       "contractName": "BuddyEvents",
       "contractAddress": "0x0dfbe218112972cc12fe004eae7ceed34c07b84d",
       "function": null,
-      "arguments": [
-        "0x534b2f3A21130d7a60830c2Df862319e593943A3"
-      ],
+      "arguments": ["0x534b2f3A21130d7a60830c2Df862319e593943A3"],
       "transaction": {
         "from": "0x4bc9032805a54da5b9670631fef99d59e83a8c4f",
         "gas": "0x4ed705",

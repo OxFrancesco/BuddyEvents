@@ -41,14 +41,17 @@ export async function callTelegramApi<T>(
   payload: Record<string, unknown>,
 ): Promise<T> {
   const token = getBotToken();
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
+  const response = await fetch(
+    `https://api.telegram.org/bot${token}/${method}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      cache: "no-store",
     },
-    body: JSON.stringify(payload),
-    cache: "no-store",
-  });
+  );
 
   if (!response.ok) {
     const body = await response.text();

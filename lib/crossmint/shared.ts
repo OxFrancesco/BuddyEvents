@@ -12,7 +12,9 @@ export function getCrossmintChainForAppChain(chainKey: SupportedChainKey) {
   }
 }
 
-export function getSupportedChainKeyForCrossmintChain(chain: string): SupportedChainKey {
+export function getSupportedChainKeyForCrossmintChain(
+  chain: string,
+): SupportedChainKey {
   return chain === "base" ? "baseMainnet" : "monadTestnet";
 }
 

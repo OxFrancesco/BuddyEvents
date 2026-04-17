@@ -3,6 +3,7 @@
 Agent-native event ticketing on Monad.
 
 BuddyEvents combines:
+
 - On-chain ticketing (ERC-721 on Monad)
 - Real-time app state (Convex)
 - Human auth (Clerk + wallet)
@@ -15,6 +16,7 @@ BuddyEvents combines:
 BuddyEvents is an event platform where both humans and AI agents can discover events, buy tickets, and validate entry.
 
 What you can do right now:
+
 - Browse approved events by Foundation and Project (`/events`)
 - Submit events with moderation workflows (`/create`, `/admin/events`)
 - Buy tickets directly on Monad from the web app (`/events/[id]`)
@@ -26,6 +28,7 @@ What you can do right now:
 - Run the durable workflow worker (`bun run worker`)
 
 Core stack:
+
 - Frontend: Next.js 16 + React 19 + Tailwind + shadcn/ui
 - Backend: Convex (queries, mutations, auth-guarded logic)
 - Auth: Clerk + wallet-linked profiles
@@ -42,12 +45,14 @@ Core stack:
 BuddyEvents has two parallel execution paths:
 
 1. Human flow:
+
 - UI in Next.js pages
 - Clerk session + wallet connect
 - Direct wallet transactions (approve USDC + `buyTicket`) via wagmi/viem
 - Off-chain ticket + QR issuance in Convex after on-chain confirmation
 
 2. Agent flow:
+
 - Effect CLI or Telegram command
 - API endpoints under `/api/*`
 - x402 challenge/settlement for paid HTTP purchases
@@ -58,6 +63,7 @@ BuddyEvents has two parallel execution paths:
 ### 2. Data Model (Convex)
 
 Main tables in `convex/schema.ts`:
+
 - `events`: lifecycle (`draft|active|ended|cancelled`), moderation (`pending|approved|rejected`), optional foundation/project assignment, on-chain event linkage.
 - `tickets`: owner, purchase tx hash, durable purchase reference/source, status (`active|listed|transferred|refunded`), QR payload, check-in metadata.
 - `ticketQrTokens`: hashed short-lived QR tokens, active plaintext mirror for rendering, expiry, revocation.
@@ -78,35 +84,42 @@ Main tables in `convex/schema.ts`:
 Auth/role checks are centralized in `convex/lib/auth.ts` and enforced in route handlers + Convex functions.
 
 Mechanisms:
+
 - Clerk-authenticated user identity for human routes.
 - Convex service-token (`CONVEX_SERVICE_TOKEN`) for trusted server-side calls.
 - Admin-only mutations for sensitive ops (team/project create, moderation, role changes, protected ticket views).
 
 Route protection in `proxy.ts`:
+
 - Protected UI paths: `/create`, `/tickets`, `/check-in`, `/admin/*`.
 - API routes still run middleware; endpoint handlers enforce auth/roles explicitly.
 
 ### 4. Event Lifecycle and Moderation
 
 #### Submission
+
 - Non-admin and unassigned submissions create `draft + pending` events.
 - Admin submissions with assignment can auto-publish to `active + approved`.
 
 #### Moderation
+
 - `/admin/events` lists pending submissions.
 - Admin can:
   - Approve with foundation/project assignment and notes
   - Reject with notes
 
 Backing logic lives in:
+
 - `convex/events.ts`: `submit`, `listPendingSubmissions`, `approveSubmission`, `rejectSubmission`.
 
 ### 5. Ticket Purchase Paths
 
 #### A. Web on-chain purchase
+
 Path: `/events/[id]`
 
 Flow:
+
 1. Ensure wallet connected + Clerk signed in
 2. Ensure Monad testnet chain selected
 3. If paid event: call USDC `approve` first
@@ -115,14 +128,17 @@ Flow:
 6. Background reconciliation replays the workflow if the browser disappears mid-flight
 
 Result:
+
 - Ticket stored in Convex exactly once
 - `ticketsSold` incremented exactly once
 - Tokenized QR issued from `ticketQrTokens`
 
 #### B. Agent/API purchase with x402
+
 Path: `GET /api/events/[id]/buy`
 
 Behavior:
+
 - Endpoint is x402-protected (`@x402/core/server`, `ExactEvmScheme`)
 - Price is dynamic per event
 - Payee is dynamic: team wallet if assigned, else fallback `PAY_TO_ADDRESS`
@@ -134,6 +150,7 @@ Behavior:
 There are two check-in paths currently:
 
 1. Organizer check-in (`/check-in`)
+
 - Uses `tickets.scanForCheckIn`
 - Validates organizer authorization via:
   - Admin role, or
@@ -141,6 +158,7 @@ There are two check-in paths currently:
   - Team wallet/member match
 
 2. Admin tokenized check-in (`/admin/checkin`)
+
 - Uses `qr.validateAndCheckIn`
 - Validates hashed QR token, expiry/revocation, duplicate entry
 - Writes immutable record to `eventCheckins`
@@ -148,7 +166,9 @@ There are two check-in paths currently:
 ### 7. Telegram + PI Agent Runtime
 
 #### Telegram bot webhook
+
 `POST /api/telegram/webhook`
+
 - Supports commands:
   - `/events`
   - `/tickets`
@@ -161,13 +181,17 @@ There are two check-in paths currently:
 - Completion and failure messages are sent by workflow steps
 
 #### Telegram Mini App auth
+
 `POST /api/telegram/auth/start`
+
 - Verifies signed Telegram `initData`
 - Upserts Telegram↔Clerk user link
 - Issues Clerk sign-in ticket for Mini App session
 
 #### PI execution engine
+
 `lib/piAgent.ts`
+
 - Intents:
   - `find_events`
   - `find_tickets`
@@ -180,12 +204,14 @@ There are two check-in paths currently:
 ### 8. Circle Wallet Integration (Optional)
 
 `lib/circle.ts` provides:
+
 - Wallet set/wallet creation
 - Balance fetch
 - Token transfer
 - Contract execution tx creation
 
 Used by PI endpoints for:
+
 - wallet connect (`/api/pi/wallet/connect`)
 - balance (`/api/pi/wallet/balance`)
 - buy/create actions through Circle-managed wallet signatures
@@ -194,6 +220,7 @@ Used by PI endpoints for:
 ### 9. Smart Contract Capabilities
 
 `contracts/src/BuddyEvents.sol` includes:
+
 - Event creation/edit/cancel
 - Ticket purchase with USDC transfer to organizer
 - ERC-721 ticket minting
@@ -201,6 +228,7 @@ Used by PI endpoints for:
 - Auto-delist on ownership transfer
 
 Contract test coverage (`contracts/test/BuddyEvents.t.sol`) includes:
+
 - event CRUD constraints
 - sold-out/cancelled reverts
 - price-lock after first sale
@@ -209,6 +237,7 @@ Contract test coverage (`contracts/test/BuddyEvents.t.sol`) includes:
 ### 10. CLI Capabilities
 
 Effect TypeScript CLI (`tools/cli/main.ts`, invoked with `bun run cli -- ...`) commands:
+
 - `wallet`
   - `setup`: generate wallet and persist config
   - `fund`: faucet request for MON
@@ -247,24 +276,29 @@ The previous Go implementation is preserved in `legacy/go-cli/` during the migra
 ### A. Human user: browse and buy from web
 
 1. Open `/`
+
 - See hero, feature highlights, and recent active events.
 
 2. Go to `/events`
+
 - Events are grouped into:
   - Foundation Events
   - Project Events
 - Only approved events are shown.
 
 3. Open an event `/events/:id`
+
 - See event details, availability, team info.
 - If wallet not on Monad testnet, switch chain.
 - Approve USDC (if paid) and buy.
 
 4. Purchase auto-finalizes
+
 - After on-chain confirmation, the page posts to `/api/purchases/confirm`.
 - Ticket fulfillment runs through the durable workflow engine and auto-heals on retry.
 
 5. Go to `/tickets`
+
 - View all owned tickets.
 - View QR for entry.
 
@@ -272,11 +306,14 @@ The previous Go implementation is preserved in `legacy/go-cli/` during the migra
 
 1. Go to `/create` (auth required)
 2. Choose destination:
+
 - Foundation
 - Project
 - Unassigned (admin queue)
+
 3. Submit event details
 4. Outcome:
+
 - Admin with assignment: auto-published
 - Otherwise: pending moderation
 
@@ -292,10 +329,12 @@ The previous Go implementation is preserved in `legacy/go-cli/` during the migra
 1. Go to `/check-in`
 2. Paste/scan QR value
 3. System validates:
+
 - Ticket exists
 - Event active
 - Organizer authorized
 - Ticket not previously checked in
+
 4. Ticket is marked checked-in
 
 ### E. Admin check-in flow (tokenized QR)
@@ -318,6 +357,7 @@ The previous Go implementation is preserved in `legacy/go-cli/` during the migra
 1. User messages bot `/start`
 2. Bot returns command guide + Mini App button
 3. Commands:
+
 - `/events` list active approved events
 - `/tickets` list user tickets
 - `/wallet` connect/get Circle wallet
@@ -348,11 +388,13 @@ The previous Go implementation is preserved in `legacy/go-cli/` during the migra
 ## API Surface (Implemented)
 
 ### Public-ish read endpoints
+
 - `GET /api/events`
 - `GET /api/teams`
 - `GET /api/agent?wallet=...`
 
 ### Auth/Admin protected endpoints
+
 - `POST /api/events` (admin create/cancel)
 - `POST /api/teams` (admin)
 - `POST /api/agent` (owner/admin)
@@ -361,12 +403,15 @@ The previous Go implementation is preserved in `legacy/go-cli/` during the migra
 - `POST /api/purchases/confirm`
 
 ### x402 purchase endpoint
+
 - `GET /api/events/[id]/buy`
 
 ### Workflow introspection
+
 - `GET /api/workflows/[id]`
 
 ### PI + Telegram endpoints
+
 - `POST /api/pi/execute`
 - `POST /api/pi/events/create` (admin)
 - `GET /api/pi/qr` (owner/admin)
@@ -380,6 +425,7 @@ The previous Go implementation is preserved in `legacy/go-cli/` during the migra
 ## Feature Matrix
 
 Web app:
+
 - Landing page with active events preview
 - Foundation/project event feeds
 - Event details + on-chain purchase
@@ -389,6 +435,7 @@ Web app:
 - Telegram Mini App command console
 
 Backend/API:
+
 - Event/team/agent CRUD paths
 - Ticket issue, lookup, check-in
 - x402 payment negotiation + settlement gating
@@ -396,6 +443,7 @@ Backend/API:
 - PI intent execution orchestration
 
 Agent/CLI:
+
 - Wallet ops + funding + token transfer
 - Event discovery and management
 - Ticket buy (direct and x402)
@@ -404,6 +452,7 @@ Agent/CLI:
 - Purchase/event/wallet reconciliation
 
 On-chain:
+
 - Event registry
 - NFT ticket minting
 - USDC-based purchases
@@ -427,6 +476,7 @@ cp .env.example .env.local
 ```
 
 Required baseline:
+
 - `NEXT_PUBLIC_CONVEX_URL`
 - `CONVEX_DEPLOYMENT`
 - `CONVEX_SERVICE_TOKEN`
@@ -439,6 +489,7 @@ Required baseline:
 - `PAY_TO_ADDRESS`
 
 Optional features:
+
 - Circle: `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET_CIPHERTEXT`, `CIRCLE_WALLET_SET_ID`
 - Telegram: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `NEXT_PUBLIC_TELEGRAM_MINIAPP_URL`, `NEXT_PUBLIC_APP_URL`
 - PI natural language intents/replies (optional): `OPENROUTER_API_KEY` (plus optional `OPENROUTER_MODEL`, `OPENROUTER_REPLY_MODEL`, `OPENROUTER_ROUTER_MODEL`, `OPENROUTER_APP_NAME`, `PI_INTENT_TIMEOUT_MS`, `PI_TELEGRAM_LLM_ROUTER`, `PI_TELEGRAM_ROUTER_TIMEOUT_MS`, `PI_TELEGRAM_LLM_REPLIES`, `PI_TELEGRAM_REPLY_TIMEOUT_MS`)
@@ -460,6 +511,7 @@ forge script script/Deploy.s.sol:DeployScript \
 ```
 
 Set deployed address in:
+
 - `.env.local` -> `NEXT_PUBLIC_BUDDY_EVENTS_CONTRACT`
 - `~/.buddyevents/config.json` -> `contractAddress` (for CLI usage)
 

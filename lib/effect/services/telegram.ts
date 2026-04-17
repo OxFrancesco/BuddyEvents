@@ -8,15 +8,16 @@ export type TelegramService = {
     text: string;
     parse_mode?: "Markdown" | "HTML";
     reply_markup?: {
-      inline_keyboard: Array<Array<{ text: string; url?: string; web_app?: { url: string } }>>;
+      inline_keyboard: Array<
+        Array<{ text: string; url?: string; web_app?: { url: string } }>
+      >;
     };
   }) => Effect.Effect<void, ExternalServiceError>;
 };
 
-export class TelegramServiceTag extends Context.Tag("@buddyevents/TelegramService")<
-  TelegramServiceTag,
-  TelegramService
->() {}
+export class TelegramServiceTag extends Context.Tag(
+  "@buddyevents/TelegramService",
+)<TelegramServiceTag, TelegramService>() {}
 
 export const TelegramServiceLayer = Layer.succeed(TelegramServiceTag, {
   sendMessage: (args) =>

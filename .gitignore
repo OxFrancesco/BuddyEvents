@@ -13,9 +13,10 @@
 # testing
 /coverage
 
-# next.js
+# next.js / sveltekit
 /.next/
 /out/
+/.svelte-kit/
 
 # production
 /build
@@ -53,3 +54,4 @@ contracts/lib/
 cli/buddyevents
 cli/bin/
 .env*.local
+docs

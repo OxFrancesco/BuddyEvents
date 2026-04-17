@@ -1,7 +1,10 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireAdmin, requireSignedInUserOrService } from "./lib/auth";
-import { resolveUserByAnyWalletAddress, userOwnsAddress } from "./lib/walletOwnership";
+import {
+  resolveUserByAnyWalletAddress,
+  userOwnsAddress,
+} from "./lib/walletOwnership";
 
 const roleValidator = v.union(v.literal("user"), v.literal("admin"));
 

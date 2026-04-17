@@ -9,10 +9,9 @@ export type OpenRouterService = {
   }) => Effect.Effect<Record<string, unknown>, ExternalServiceError>;
 };
 
-export class OpenRouterServiceTag extends Context.Tag("@buddyevents/OpenRouterService")<
-  OpenRouterServiceTag,
-  OpenRouterService
->() {}
+export class OpenRouterServiceTag extends Context.Tag(
+  "@buddyevents/OpenRouterService",
+)<OpenRouterServiceTag, OpenRouterService>() {}
 
 export const OpenRouterServiceLayer = Layer.effect(
   OpenRouterServiceTag,
@@ -68,4 +67,3 @@ export const OpenRouterServiceLayer = Layer.effect(
     };
   }),
 );
-

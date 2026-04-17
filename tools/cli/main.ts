@@ -68,7 +68,9 @@ function cliError(error: unknown, fallbackMessage: string) {
   return new Error(fallbackMessage);
 }
 
-async function buildRootCliContext(args: RootCommandArgs): Promise<RootCliContext> {
+async function buildRootCliContext(
+  args: RootCommandArgs,
+): Promise<RootCliContext> {
   const loaded = await loadCliConfig(
     Option.getOrUndefined(args.configPath) || defaultCliConfigPath(),
   );
@@ -164,12 +166,17 @@ function requireWalletAddress(
 
 function requirePrivateKey(context: RootCliContext) {
   if (!context.config.privateKey) {
-    throw new Error("No private key configured. Run `buddyevents wallet setup`.");
+    throw new Error(
+      "No private key configured. Run `buddyevents wallet setup`.",
+    );
   }
   return context.config.privateKey as `0x${string}`;
 }
 
-function getSelectedChain(context: RootCliContext, chainKey = context.selectedChainKey) {
+function getSelectedChain(
+  context: RootCliContext,
+  chainKey = context.selectedChainKey,
+) {
   return {
     chainKey,
     config: context.config.chains[chainKey],
@@ -248,11 +255,13 @@ function buildApiUrl(context: RootCliContext, pathname: string) {
   return `${context.config.apiUrl.replace(/\/$/, "")}${pathname}`;
 }
 
-function formatWorkflow(execution: {
-  payloadJson: string;
-  resultJson?: string;
-  errorJson?: string;
-} & Record<string, unknown>) {
+function formatWorkflow(
+  execution: {
+    payloadJson: string;
+    resultJson?: string;
+    errorJson?: string;
+  } & Record<string, unknown>,
+) {
   return {
     ...execution,
     payload: parseJson(execution.payloadJson),
@@ -263,9 +272,14 @@ function formatWorkflow(execution: {
 
 async function fetchJson<T>(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
-  const body = (await response.json()) as T & { error?: string; message?: string };
+  const body = (await response.json()) as T & {
+    error?: string;
+    message?: string;
+  };
   if (!response.ok) {
-    throw new Error(body.error ?? body.message ?? `Request failed (${response.status})`);
+    throw new Error(
+      body.error ?? body.message ?? `Request failed (${response.status})`,
+    );
   }
   return body;
 }
@@ -394,29 +408,37 @@ const walletSend = Command.make(
         chainKey: selected.chainKey,
         to,
         amount,
-        token: normalizedToken === "usdc" ? "usdc" : selected.chain.nativeSymbol,
+        token:
+          normalizedToken === "usdc" ? "usdc" : selected.chain.nativeSymbol,
         txHash: hash,
       };
     }),
 );
 
-const walletCommand = Command.make("wallet", {}, () => Effect.succeed(undefined)).pipe(
+const walletCommand = Command.make("wallet", {}, () =>
+  Effect.succeed(undefined),
+).pipe(
   Command.withSubcommands([walletSetup, walletBalance, walletFund, walletSend]),
 );
 
 const statusOption = Options.text("status").pipe(Options.optional);
 const listLimitOption = Options.integer("limit").pipe(Options.withDefault(20));
 
-const eventsList = Command.make("list", { status: statusOption }, ({ status }) =>
-  withCliContext("Event listing failed", async (context) => {
-    return await context.convex.query(api.events.list, {
-      status: Option.getOrUndefined(status),
-    } as never);
-  }),
+const eventsList = Command.make(
+  "list",
+  { status: statusOption },
+  ({ status }) =>
+    withCliContext("Event listing failed", async (context) => {
+      return await context.convex.query(api.events.list, {
+        status: Option.getOrUndefined(status),
+      } as never);
+    }),
 );
 
 const eventName = Options.text("name");
-const eventDescription = Options.text("description").pipe(Options.withDefault(""));
+const eventDescription = Options.text("description").pipe(
+  Options.withDefault(""),
+);
 const eventStart = Options.text("start");
 const eventEnd = Options.text("end");
 const eventPrice = Options.text("price").pipe(Options.withDefault("0"));
@@ -448,15 +470,21 @@ const eventsCreate = Command.make(
         Option.getOrUndefined(config.creator),
         "Provide --creator or configure a wallet first.",
       );
-      const creatorUserId = await requireUserIdByWallet(context, creatorAddress);
-      const idempotencyKey = buildDeterministicIdempotencyKey("cli-create-event", [
-        config.name,
-        config.start,
-        config.end,
-        config.teamId,
+      const creatorUserId = await requireUserIdByWallet(
+        context,
         creatorAddress,
-        chainKey,
-      ]);
+      );
+      const idempotencyKey = buildDeterministicIdempotencyKey(
+        "cli-create-event",
+        [
+          config.name,
+          config.start,
+          config.end,
+          config.teamId,
+          creatorAddress,
+          chainKey,
+        ],
+      );
 
       const workflow = await startWorkflowAndRun({
         workflowName: "create_event",
@@ -503,9 +531,9 @@ const eventsCancel = Command.make("cancel", { id: cancelEventId }, ({ id }) =>
   }),
 );
 
-const eventsCommand = Command.make("events", {}, () => Effect.succeed(undefined)).pipe(
-  Command.withSubcommands([eventsList, eventsCreate, eventsCancel]),
-);
+const eventsCommand = Command.make("events", {}, () =>
+  Effect.succeed(undefined),
+).pipe(Command.withSubcommands([eventsList, eventsCreate, eventsCancel]));
 
 const buyerOption = Options.text("buyer").pipe(Options.optional);
 const ticketEventId = Options.text("event-id").pipe(Options.optional);
@@ -550,8 +578,8 @@ const ticketsBuy = Command.make(
       const { account, walletClient } = getWalletClient(context, chainKey);
 
       if (Option.isSome(onChainId)) {
-        const contractAddress =
-          (event?.contractAddress ?? selected.config.contractAddress) as `0x${string}`;
+        const contractAddress = (event?.contractAddress ??
+          selected.config.contractAddress) as `0x${string}`;
         const hash = await walletClient.writeContract({
           address: contractAddress,
           abi: BUDDY_EVENTS_ABI,
@@ -614,11 +642,10 @@ const ticketsBuy = Command.make(
       }
 
       const buyerAddress = requireWalletAddress(context);
-      const idempotencyKey = buildDeterministicIdempotencyKey("cli-x402-ticket-buy", [
-        eventId.value,
-        buyerAddress,
-        chainKey,
-      ]);
+      const idempotencyKey = buildDeterministicIdempotencyKey(
+        "cli-x402-ticket-buy",
+        [eventId.value, buyerAddress, chainKey],
+      );
       const fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
         schemes: [
           {
@@ -628,7 +655,10 @@ const ticketsBuy = Command.make(
         ],
       });
       const response = await fetchWithPayment(
-        buildApiUrl(context, `/api/events/${eventId.value}/buy?buyer=${buyerAddress}`),
+        buildApiUrl(
+          context,
+          `/api/events/${eventId.value}/buy?buyer=${buyerAddress}`,
+        ),
         {
           method: "GET",
           headers: {
@@ -681,9 +711,9 @@ const ticketsSell = Command.make(
     }),
 );
 
-const ticketsCommand = Command.make("tickets", {}, () => Effect.succeed(undefined)).pipe(
-  Command.withSubcommands([ticketsList, ticketsBuy, ticketsSell]),
-);
+const ticketsCommand = Command.make("tickets", {}, () =>
+  Effect.succeed(undefined),
+).pipe(Command.withSubcommands([ticketsList, ticketsBuy, ticketsSell]));
 
 const agentName = Options.text("name");
 const agentWallet = Options.text("wallet").pipe(Options.optional);
@@ -715,25 +745,22 @@ const agentRegister = Command.make(
     }),
 );
 
-const agentInfo = Command.make(
-  "info",
-  { wallet: agentWallet },
-  ({ wallet }) =>
-    withCliContext("Agent lookup failed", async (context) => {
-      const walletAddress = requireWalletAddress(
-        context,
-        Option.getOrUndefined(wallet),
-        "Provide --wallet or configure a wallet first.",
-      );
-      return await context.convex.query(api.agents.getByWallet, {
-        walletAddress,
-      } as never);
-    }),
+const agentInfo = Command.make("info", { wallet: agentWallet }, ({ wallet }) =>
+  withCliContext("Agent lookup failed", async (context) => {
+    const walletAddress = requireWalletAddress(
+      context,
+      Option.getOrUndefined(wallet),
+      "Provide --wallet or configure a wallet first.",
+    );
+    return await context.convex.query(api.agents.getByWallet, {
+      walletAddress,
+    } as never);
+  }),
 );
 
-const agentCommand = Command.make("agent", {}, () => Effect.succeed(undefined)).pipe(
-  Command.withSubcommands([agentRegister, agentInfo]),
-);
+const agentCommand = Command.make("agent", {}, () =>
+  Effect.succeed(undefined),
+).pipe(Command.withSubcommands([agentRegister, agentInfo]));
 
 const workflowStatus = Options.text("status").pipe(Options.optional);
 const workflowId = Options.text("id");
@@ -818,7 +845,9 @@ function makeReconcileSubcommand(
 
       return {
         reconciled: matching.length,
-        results: results.map((result) => (result ? formatWorkflow(result) : null)),
+        results: results.map((result) =>
+          result ? formatWorkflow(result) : null,
+        ),
       };
     }),
   );

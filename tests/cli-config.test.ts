@@ -2,7 +2,11 @@ import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadCliConfig, saveCliConfig, type StoredCliConfig } from "@/tools/cli/config";
+import {
+  loadCliConfig,
+  saveCliConfig,
+  type StoredCliConfig,
+} from "@/tools/cli/config";
 
 describe("CLI config", () => {
   let tempDir: string | null = null;

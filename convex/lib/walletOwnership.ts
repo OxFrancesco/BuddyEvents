@@ -16,7 +16,10 @@ export function isSameAddress(
   return !!normalizedA && normalizedA === normalizedB;
 }
 
-export async function listUserWallets(ctx: AnyCtx, userId: Doc<"users">["_id"]) {
+export async function listUserWallets(
+  ctx: AnyCtx,
+  userId: Doc<"users">["_id"],
+) {
   return await ctx.db
     .query("wallets")
     .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -53,7 +56,9 @@ export async function userOwnsAddress(
   if (!target) return false;
 
   const ownedAddresses = await listOwnedWalletAddresses(ctx, user);
-  return ownedAddresses.some((candidate) => normalizeAddress(candidate) === target);
+  return ownedAddresses.some(
+    (candidate) => normalizeAddress(candidate) === target,
+  );
 }
 
 export async function resolveUserByAnyWalletAddress(

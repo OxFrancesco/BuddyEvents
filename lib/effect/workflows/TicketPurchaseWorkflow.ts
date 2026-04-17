@@ -55,7 +55,10 @@ export const TicketPurchaseWorkflow: WorkflowDefinition<
             txHash: context.payload.txHash,
             purchaseReference: context.payload.purchaseReference,
           },
-          evm.waitForReceipt(event.chainKey, context.payload.txHash as `0x${string}`),
+          evm.waitForReceipt(
+            event.chainKey,
+            context.payload.txHash as `0x${string}`,
+          ),
           context.payload.txHash,
         );
 
@@ -69,7 +72,8 @@ export const TicketPurchaseWorkflow: WorkflowDefinition<
         if (!purchaseLog) {
           return yield* Effect.fail(
             new WorkflowPermanentError({
-              message: "Wallet transaction does not include a TicketPurchased log",
+              message:
+                "Wallet transaction does not include a TicketPurchased log",
               details: { txHash: context.payload.txHash },
             }),
           );
@@ -86,7 +90,8 @@ export const TicketPurchaseWorkflow: WorkflowDefinition<
         ) {
           return yield* Effect.fail(
             new WorkflowPermanentError({
-              message: "Wallet transaction event ID does not match requested event",
+              message:
+                "Wallet transaction event ID does not match requested event",
               details: {
                 txHash: context.payload.txHash,
                 expectedEventId: event.onChainEventId,
@@ -112,7 +117,10 @@ export const TicketPurchaseWorkflow: WorkflowDefinition<
           );
         }
 
-        tokenId = typeof purchasedTokenId === "bigint" ? Number(purchasedTokenId) : undefined;
+        tokenId =
+          typeof purchasedTokenId === "bigint"
+            ? Number(purchasedTokenId)
+            : undefined;
       }
 
       const purchase = yield* context.step(

@@ -60,9 +60,13 @@ export const CircleServiceLayer = Layer.effect(
     const config = yield* AppConfigTag;
     const convex = yield* ConvexServiceTag;
 
-    const ensureUserWallet = (userId: Id<"users">, chainKey: SupportedChainKey) =>
+    const ensureUserWallet = (
+      userId: Id<"users">,
+      chainKey: SupportedChainKey,
+    ) =>
       Effect.tryPromise({
-        try: () => createOrGetCircleWalletForUser(convex.client, userId, chainKey),
+        try: () =>
+          createOrGetCircleWalletForUser(convex.client, userId, chainKey),
         catch: (error) =>
           new ExternalServiceError({
             message: "Circle wallet provisioning failed",

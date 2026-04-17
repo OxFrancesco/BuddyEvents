@@ -18,7 +18,8 @@ const facilitatorClients = new Map<SupportedChainKey, HTTPFacilitatorClient>();
 
 function createMissingCdpCredentialError(chainKey: SupportedChainKey) {
   const chain = getChainConfig(chainKey);
-  const apiKeyIdVar = chain.facilitator.cdpApiKeyIdEnvVar ?? "BASE_X402_CDP_API_KEY_ID";
+  const apiKeyIdVar =
+    chain.facilitator.cdpApiKeyIdEnvVar ?? "BASE_X402_CDP_API_KEY_ID";
   const apiKeySecretVar =
     chain.facilitator.cdpApiKeySecretEnvVar ?? "BASE_X402_CDP_API_KEY_SECRET";
   return new Error(
@@ -31,7 +32,9 @@ async function createCdpAuthHeaders(chainKey: SupportedChainKey) {
   const apiKeyIdVar = chain.facilitator.cdpApiKeyIdEnvVar;
   const apiKeySecretVar = chain.facilitator.cdpApiKeySecretEnvVar;
   const apiKeyId = apiKeyIdVar ? process.env[apiKeyIdVar]?.trim() : undefined;
-  const apiKeySecret = apiKeySecretVar ? process.env[apiKeySecretVar]?.trim() : undefined;
+  const apiKeySecret = apiKeySecretVar
+    ? process.env[apiKeySecretVar]?.trim()
+    : undefined;
 
   if (!apiKeyId || !apiKeySecret) {
     throw createMissingCdpCredentialError(chainKey);
@@ -82,11 +85,13 @@ export function getX402UsdcAddress(chainKey: SupportedChainKey): `0x${string}` {
 }
 
 export function formatUsdcPrice(amountUsd: number) {
-  const normalized = Number.isFinite(amountUsd) && amountUsd > 0 ? amountUsd : 0.001;
+  const normalized =
+    Number.isFinite(amountUsd) && amountUsd > 0 ? amountUsd : 0.001;
   return `$${normalized.toFixed(6)}`;
 }
 
 export function toAtomicUsdcAmount(amountUsd: number) {
-  const normalized = Number.isFinite(amountUsd) && amountUsd > 0 ? amountUsd : 0.001;
+  const normalized =
+    Number.isFinite(amountUsd) && amountUsd > 0 ? amountUsd : 0.001;
   return Math.floor(normalized * 1_000_000).toString();
 }

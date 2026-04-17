@@ -21,7 +21,11 @@ const drainDueExecutions = Effect.gen(function* () {
   }
 
   const claimed = yield* convex.mutation<
-    Array<{ _id: Id<"workflowExecutions">; workflowName: string; status: string }>
+    Array<{
+      _id: Id<"workflowExecutions">;
+      workflowName: string;
+      status: string;
+    }>
   >(api.workflows.claimDue, {
     workerId,
     limit: 5,

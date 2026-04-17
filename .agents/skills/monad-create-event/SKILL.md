@@ -23,6 +23,7 @@ Creates an event on the deployed BuddyEvents contract on Monad (testnet or mainn
 2. **Resolve the contract address** by reading `contracts/broadcast/Deploy.s.sol/10143/run-latest.json` and extracting `contractAddress` from the first transaction.
 
 3. **Run the Foundry script**:
+
    ```bash
    cd contracts && source ../.env.local && \
      BUDDY_EVENTS_CONTRACT=<address> forge script \
@@ -38,10 +39,10 @@ Creates an event on the deployed BuddyEvents contract on Monad (testnet or mainn
 
 The Foundry script is at `contracts/script/CreateEvent.s.sol`. It accepts these environment variables:
 
-| Variable | Description |
-|---|---|
-| `BUDDY_EVENTS_CONTRACT` | Deployed contract address |
-| `PRIVATE_KEY` | Deployer/organizer private key |
+| Variable                | Description                    |
+| ----------------------- | ------------------------------ |
+| `BUDDY_EVENTS_CONTRACT` | Deployed contract address      |
+| `PRIVATE_KEY`           | Deployer/organizer private key |
 
 ## Customising Parameters
 

@@ -22,7 +22,10 @@ describe("idempotency helpers", () => {
   });
 
   it("changes the key when the namespace or payload changes", () => {
-    const base = buildDeterministicIdempotencyKey("ticket", ["event-1", "buyer-1"]);
+    const base = buildDeterministicIdempotencyKey("ticket", [
+      "event-1",
+      "buyer-1",
+    ]);
     const changedNamespace = buildDeterministicIdempotencyKey("event", [
       "event-1",
       "buyer-1",

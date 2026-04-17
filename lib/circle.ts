@@ -178,7 +178,8 @@ export async function createContractExecutionTransaction(
   }
   const data = await response.json();
   const tx = data?.data;
-  if (!tx) throw new Error("Circle contract execution missing transaction data");
+  if (!tx)
+    throw new Error("Circle contract execution missing transaction data");
   return tx as {
     transactionId?: string;
     id?: string;
@@ -216,7 +217,9 @@ async function tryGetCircleTransaction(
   if (response.status === 404) return null;
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Circle transaction lookup failed (${response.status}): ${body}`);
+    throw new Error(
+      `Circle transaction lookup failed (${response.status}): ${body}`,
+    );
   }
 
   const payload = (await response.json()) as {
@@ -356,12 +359,11 @@ export async function executeBuyTicketWithCircleWallet(args: {
       idempotencyKey: args.idempotencyKey,
     });
     return {
-      txHash:
-        (createTx.txHash ??
-          createTx.transactionHash ??
-          createTx.transactionId ??
-          createTx.id ??
-          "") as string,
+      txHash: (createTx.txHash ??
+        createTx.transactionHash ??
+        createTx.transactionId ??
+        createTx.id ??
+        "") as string,
       transactionId: (createTx.transactionId ?? createTx.id ?? undefined) as
         | string
         | undefined,
@@ -394,12 +396,11 @@ export async function executeBuyTicketWithCircleWallet(args: {
   });
 
   return {
-    txHash:
-      (buyTx.txHash ??
-        buyTx.transactionHash ??
-        buyTx.transactionId ??
-        buyTx.id ??
-        "") as string,
+    txHash: (buyTx.txHash ??
+      buyTx.transactionHash ??
+      buyTx.transactionId ??
+      buyTx.id ??
+      "") as string,
     transactionId: (buyTx.transactionId ?? buyTx.id ?? undefined) as
       | string
       | undefined,

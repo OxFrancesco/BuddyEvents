@@ -1,5 +1,3 @@
-"use client";
-
 import { getCrossmintTransactionHash } from "@/lib/crossmint/shared";
 
 export type CrossmintAppWallet = {
@@ -39,7 +37,9 @@ async function requestJson<T>(input: string, init?: JsonOptions): Promise<T> {
   const response = await fetch(input, {
     method: init?.method ?? "GET",
     headers:
-      init?.body !== undefined ? { "content-type": "application/json" } : undefined,
+      init?.body !== undefined
+        ? { "content-type": "application/json" }
+        : undefined,
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
     cache: "no-store",
   });

@@ -10,6 +10,7 @@ description: Operates BuddyEvents Monad testnet wallets and on-chain event lifec
 This skill manages agent wallets and the on-chain event lifecycle for this repo using `cli/buddyevents` and Foundry's `cast` on Monad testnet (`chainId 10143`).
 
 Primary capabilities:
+
 - **Wallet**: `wallet setup`, `wallet fund`, `wallet balance`, `wallet send`
 - **Events**: `events create` (API), on-chain `createEvent` (cast), `events list`, `events cancel`
 - **Tickets**: `tickets buy` (on-chain or x402), `tickets sell`, `tickets list`
@@ -53,6 +54,7 @@ go build -o buddyevents .
 ```
 
 Behavior:
+
 - Generates ECDSA private key
 - Stores wallet in `~/.buddyevents/config.json`
 - Prints wallet address and private key
@@ -64,6 +66,7 @@ Behavior:
 ```
 
 Notes:
+
 - Uses Monad agent faucet API with `chainId: 10143`
 - For USDC, use Circle faucet manually: `https://faucet.circle.com` (select Monad Testnet)
 
@@ -74,6 +77,7 @@ Notes:
 ```
 
 Outputs:
+
 - `MON` (native)
 - `USDC` (ERC-20 at configured `usdc_address`)
 
@@ -133,6 +137,7 @@ cast send --rpc-url "$RPC" \
 ```
 
 Parameters:
+
 - `name` — event name string
 - `priceInUSDC` — price in USDC smallest units (6 decimals: `10000000` = 10 USDC, `0` = free)
 - `maxTickets` — max ticket supply
@@ -172,6 +177,7 @@ Output: `(name, priceInUSDC, maxTickets, ticketsSold, organizer, active)`
 ```
 
 This runs:
+
 1. `cast call getEvent()` to read price
 2. `cast send approve()` USDC to contract
 3. `cast send buyTicket()` on the contract

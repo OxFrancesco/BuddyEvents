@@ -1,6 +1,10 @@
 import { Effect } from "effect";
 import { sendTelegramMessage } from "@/lib/telegram";
-import { executePiAction, type PiExecutionResult, type PiIntent } from "@/lib/piAgent";
+import {
+  executePiAction,
+  type PiExecutionResult,
+  type PiIntent,
+} from "@/lib/piAgent";
 import { WorkflowPermanentError } from "../errors";
 import type { TelegramCommandWorkflowPayload } from "./shared";
 import type { WorkflowDefinition, WorkflowRunContext } from "./registry";

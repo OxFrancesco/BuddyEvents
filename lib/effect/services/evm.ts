@@ -69,7 +69,10 @@ export const EvmServiceLayer = Layer.succeed(
               details: { chainKey, txHash },
             }),
         }),
-      extractCreatedEventId: (chainKey: SupportedChainKey, txHash: `0x${string}`) =>
+      extractCreatedEventId: (
+        chainKey: SupportedChainKey,
+        txHash: `0x${string}`,
+      ) =>
         Effect.gen(function* () {
           const receipt = yield* Effect.tryPromise({
             try: () =>

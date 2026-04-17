@@ -26,14 +26,17 @@ export async function startWorkflow(input: StartWorkflowInput) {
       );
       const config = yield* AppConfigTag;
       const convex = yield* ConvexServiceTag;
-      return yield* convex.mutation<WorkflowExecution>(api.workflows.startOrGet, {
-        workflowName: input.workflowName,
-        idempotencyKey: input.idempotencyKey,
-        source: input.source,
-        actorUserId: input.actorUserId,
-        payloadJson: toJson(input.payload),
-        serviceToken: config.convexServiceToken,
-      });
+      return yield* convex.mutation<WorkflowExecution>(
+        api.workflows.startOrGet,
+        {
+          workflowName: input.workflowName,
+          idempotencyKey: input.idempotencyKey,
+          source: input.source,
+          actorUserId: input.actorUserId,
+          payloadJson: toJson(input.payload),
+          serviceToken: config.convexServiceToken,
+        },
+      );
     }),
   );
 }
@@ -60,7 +63,9 @@ export async function runWorkflowById(
   workerId?: string,
 ) {
   const registry = await loadRegistryModule();
-  return await AppRuntime.runPromise(registry.runWorkflowExecutionEffect(id, workerId));
+  return await AppRuntime.runPromise(
+    registry.runWorkflowExecutionEffect(id, workerId),
+  );
 }
 
 export async function startWorkflowAndRun(input: StartWorkflowInput) {

@@ -4,7 +4,10 @@ import { requireServiceAccess, requireSignedInUserOrService } from "./lib/auth";
 import { chainKeyValidator, withDefaultWalletChain } from "./lib/chains";
 import { userOwnsAddress } from "./lib/walletOwnership";
 
-const walletProviderValidator = v.union(v.literal("circle"), v.literal("crossmint"));
+const walletProviderValidator = v.union(
+  v.literal("circle"),
+  v.literal("crossmint"),
+);
 const walletPurposeValidator = v.union(
   v.literal("human_primary"),
   v.literal("automation"),
@@ -212,7 +215,9 @@ export const upsertCircleWallet = mutation({
 
     const existingByAddress = await ctx.db
       .query("wallets")
-      .withIndex("by_wallet_address", (q) => q.eq("walletAddress", args.walletAddress))
+      .withIndex("by_wallet_address", (q) =>
+        q.eq("walletAddress", args.walletAddress),
+      )
       .unique();
     if (existingByAddress) {
       await ctx.db.patch(existingByAddress._id, {
@@ -304,7 +309,9 @@ export const upsertCrossmintWallet = mutation({
 
     const existingByAddress = await ctx.db
       .query("wallets")
-      .withIndex("by_wallet_address", (q) => q.eq("walletAddress", args.walletAddress))
+      .withIndex("by_wallet_address", (q) =>
+        q.eq("walletAddress", args.walletAddress),
+      )
       .unique();
     if (existingByAddress) {
       await ctx.db.patch(existingByAddress._id, {

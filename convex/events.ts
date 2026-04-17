@@ -168,37 +168,39 @@ export const listEventsPageSections = query({
     const foundationMap = new Map(foundations.map((item) => [item._id, item]));
     const projectMap = new Map(projects.map((item) => [item._id, item]));
 
-    const foundationEvents: Array<
-      {
-        _id: Doc<"events">["_id"];
-        _creationTime: number;
-        name: string;
-        description: string;
-        startTime: number;
-        endTime: number;
-        price: number;
-        maxTickets: number;
-        ticketsSold: number;
-        chainKey: "monadTestnet" | "baseMainnet";
-        chainId: 10143 | 8453;
-        teamId: Doc<"events">["teamId"];
-        projectId: Doc<"events">["projectId"];
-        location: string;
-        creatorAddress: string;
-        status: Doc<"events">["status"];
-        moderationStatus: "pending" | "approved" | "rejected";
-        foundationName?: string;
-        projectName?: string;
-      }
-    > = [];
+    const foundationEvents: Array<{
+      _id: Doc<"events">["_id"];
+      _creationTime: number;
+      name: string;
+      description: string;
+      startTime: number;
+      endTime: number;
+      price: number;
+      maxTickets: number;
+      ticketsSold: number;
+      chainKey: "monadTestnet" | "baseMainnet";
+      chainId: 10143 | 8453;
+      teamId: Doc<"events">["teamId"];
+      projectId: Doc<"events">["projectId"];
+      location: string;
+      creatorAddress: string;
+      status: Doc<"events">["status"];
+      moderationStatus: "pending" | "approved" | "rejected";
+      foundationName?: string;
+      projectName?: string;
+    }> = [];
     const projectEvents: typeof foundationEvents = [];
 
     for (const event of events) {
       if (effectiveModerationStatus(event) !== "approved") continue;
 
-      const project = event.projectId ? projectMap.get(event.projectId) : undefined;
+      const project = event.projectId
+        ? projectMap.get(event.projectId)
+        : undefined;
       const foundationId = project?.foundationId ?? event.teamId;
-      const foundation = foundationId ? foundationMap.get(foundationId) : undefined;
+      const foundation = foundationId
+        ? foundationMap.get(foundationId)
+        : undefined;
 
       const item = {
         _id: event._id,
@@ -264,7 +266,9 @@ export const listPendingSubmissions = query({
     const [events, foundations, projects, users] = await Promise.all([
       ctx.db
         .query("events")
-        .withIndex("by_moderation_status", (q) => q.eq("moderationStatus", "pending"))
+        .withIndex("by_moderation_status", (q) =>
+          q.eq("moderationStatus", "pending"),
+        )
         .order("desc")
         .collect(),
       ctx.db.query("teams").collect(),
@@ -282,46 +286,56 @@ export const listPendingSubmissions = query({
     }
     const wallets = await ctx.db.query("wallets").collect();
     for (const wallet of wallets) {
-      if (!wallet.userId || userByWallet.has(wallet.walletAddress.toLowerCase())) continue;
+      if (
+        !wallet.userId ||
+        userByWallet.has(wallet.walletAddress.toLowerCase())
+      )
+        continue;
       const owner = users.find((user) => user._id === wallet.userId);
       if (owner) {
         userByWallet.set(wallet.walletAddress.toLowerCase(), owner);
       }
     }
 
-    return await Promise.all(events.map(async (event) => {
-      const project = event.projectId ? projectMap.get(event.projectId) : undefined;
-      const foundationId = project?.foundationId ?? event.teamId;
-      const foundation = foundationId ? foundationMap.get(foundationId) : undefined;
-      const submitter =
-        userByWallet.get(event.creatorAddress.toLowerCase()) ??
-        (await resolveUserByAnyWalletAddress(ctx, event.creatorAddress));
+    return await Promise.all(
+      events.map(async (event) => {
+        const project = event.projectId
+          ? projectMap.get(event.projectId)
+          : undefined;
+        const foundationId = project?.foundationId ?? event.teamId;
+        const foundation = foundationId
+          ? foundationMap.get(foundationId)
+          : undefined;
+        const submitter =
+          userByWallet.get(event.creatorAddress.toLowerCase()) ??
+          (await resolveUserByAnyWalletAddress(ctx, event.creatorAddress));
 
-      return {
-        _id: event._id,
-        _creationTime: event._creationTime,
-        name: event.name,
-        description: event.description,
-        startTime: event.startTime,
-        endTime: event.endTime,
-        price: event.price,
-        maxTickets: event.maxTickets,
-        ticketsSold: event.ticketsSold,
-        chainKey: resolveEventChainKey(event),
-        chainId: resolveEventChainId(event),
-        teamId: foundationId,
-        projectId: project?._id,
-        location: event.location,
-        creatorAddress: event.creatorAddress,
-        status: event.status,
-        moderationStatus: effectiveModerationStatus(event),
-        submissionSource: event.submissionSource,
-        foundationName: foundation?.name,
-        projectName: project?.name,
-        submitterEmail: submitter?.email,
-        submitterRole: submitter?.role,
-      };
-    }));
+        return {
+          _id: event._id,
+          _creationTime: event._creationTime,
+          name: event.name,
+          description: event.description,
+          startTime: event.startTime,
+          endTime: event.endTime,
+          price: event.price,
+          maxTickets: event.maxTickets,
+          ticketsSold: event.ticketsSold,
+          chainKey: resolveEventChainKey(event),
+          chainId: resolveEventChainId(event),
+          teamId: foundationId,
+          projectId: project?._id,
+          location: event.location,
+          creatorAddress: event.creatorAddress,
+          status: event.status,
+          moderationStatus: effectiveModerationStatus(event),
+          submissionSource: event.submissionSource,
+          foundationName: foundation?.name,
+          projectName: project?.name,
+          submitterEmail: submitter?.email,
+          submitterRole: submitter?.role,
+        };
+      }),
+    );
   },
 });
 
@@ -406,7 +420,8 @@ export const submit = mutation({
     }
 
     const isAdmin = submitter.role === "admin";
-    const hasAssignment = foundationId !== undefined || args.projectId !== undefined;
+    const hasAssignment =
+      foundationId !== undefined || args.projectId !== undefined;
     const autoApprove = isAdmin && hasAssignment;
     const chainKey = args.chainKey ?? "monadTestnet";
 
@@ -469,7 +484,9 @@ export const approveSubmission = mutation({
     }
 
     if (!foundationId) {
-      throw new Error("Approval requires assignment to a foundation or project");
+      throw new Error(
+        "Approval requires assignment to a foundation or project",
+      );
     }
     const foundation = await ctx.db.get(foundationId);
     if (!foundation) throw new Error("Foundation not found");

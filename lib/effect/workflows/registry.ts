@@ -82,10 +82,13 @@ export const runWorkflowExecutionEffect = (
     const convex = yield* ConvexServiceTag;
     const config = yield* AppConfigTag;
 
-    const execution = yield* convex.query<WorkflowExecution | null>(api.workflows.get, {
-      id: executionId,
-      serviceToken: config.convexServiceToken,
-    });
+    const execution = yield* convex.query<WorkflowExecution | null>(
+      api.workflows.get,
+      {
+        id: executionId,
+        serviceToken: config.convexServiceToken,
+      },
+    );
     if (!execution) {
       throw new Error(`Workflow ${executionId} not found`);
     }
@@ -126,7 +129,9 @@ export const runWorkflowExecutionEffect = (
       getCompletedStep: <A>(stepName: string) => {
         const completed = [...steps]
           .reverse()
-          .find((step) => step.stepName === stepName && step.status === "completed");
+          .find(
+            (step) => step.stepName === stepName && step.status === "completed",
+          );
         return parseJson<A>(completed?.outputJson);
       },
       step: <A>(
@@ -181,25 +186,31 @@ export const runWorkflowExecutionEffect = (
 
     try {
       const result = yield* definition.run(context);
-      return yield* convex.mutation<WorkflowExecution | null>(api.workflows.complete, {
-        id: executionId,
-        resultJson: toJson(result),
-        serviceToken,
-      });
+      return yield* convex.mutation<WorkflowExecution | null>(
+        api.workflows.complete,
+        {
+          id: executionId,
+          resultJson: toJson(result),
+          serviceToken,
+        },
+      );
     } catch (error) {
       const normalized = normalizeWorkflowError(error);
       if (definition.onFailure) {
         yield* definition.onFailure(context, normalized);
       }
-      return yield* convex.mutation<WorkflowExecution | null>(api.workflows.fail, {
-        id: executionId,
-        errorJson: toJson(serializeError(normalized)),
-        retryAt:
-          normalized._tag === "WorkflowTransientError" ||
-          normalized._tag === "WorkflowAmbiguousError"
-            ? Date.now() + computeRetryDelayMs(execution.attempt + 1)
-            : undefined,
-        serviceToken,
-      });
+      return yield* convex.mutation<WorkflowExecution | null>(
+        api.workflows.fail,
+        {
+          id: executionId,
+          errorJson: toJson(serializeError(normalized)),
+          retryAt:
+            normalized._tag === "WorkflowTransientError" ||
+            normalized._tag === "WorkflowAmbiguousError"
+              ? Date.now() + computeRetryDelayMs(execution.attempt + 1)
+              : undefined,
+          serviceToken,
+        },
+      );
     }
   });

@@ -85,7 +85,8 @@ export type ProvisionWalletWorkflowPayload = {
   chainKey?: SupportedChainKey;
 };
 
-export type ProvisionCircleWalletWorkflowPayload = ProvisionWalletWorkflowPayload;
+export type ProvisionCircleWalletWorkflowPayload =
+  ProvisionWalletWorkflowPayload;
 
 export type RefreshQrWorkflowPayload = {
   ticketId: Id<"tickets">;

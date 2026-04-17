@@ -1,7 +1,10 @@
 import type { UserResource } from "@clerk/types";
 
 export function getClerkWeb3WalletAddress(
-  user: Pick<UserResource, "primaryWeb3Wallet" | "verifiedWeb3Wallets"> | null | undefined,
+  user:
+    | Pick<UserResource, "primaryWeb3Wallet" | "verifiedWeb3Wallets">
+    | null
+    | undefined,
 ) {
   return (
     user?.primaryWeb3Wallet?.web3Wallet ??

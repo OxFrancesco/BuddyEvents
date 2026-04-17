@@ -42,10 +42,9 @@ export type CrossmintService = {
   >;
 };
 
-export class CrossmintServiceTag extends Context.Tag("@buddyevents/CrossmintService")<
-  CrossmintServiceTag,
-  CrossmintService
->() {}
+export class CrossmintServiceTag extends Context.Tag(
+  "@buddyevents/CrossmintService",
+)<CrossmintServiceTag, CrossmintService>() {}
 
 export const CrossmintServiceLayer = Layer.effect(
   CrossmintServiceTag,
@@ -53,7 +52,9 @@ export const CrossmintServiceLayer = Layer.effect(
     const convex = yield* ConvexServiceTag;
     const config = yield* AppConfigTag;
 
-    const loadUser = (userId: Id<"users">): Effect.Effect<Doc<"users">, ExternalServiceError> =>
+    const loadUser = (
+      userId: Id<"users">,
+    ): Effect.Effect<Doc<"users">, ExternalServiceError> =>
       pipe(
         convex.query<Doc<"users"> | null>(api.users.getById, {
           userId,

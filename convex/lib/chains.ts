@@ -27,12 +27,14 @@ export function resolveEventChainId(event: {
 }): SupportedChainId {
   const chainKey = resolveEventChainKey(event);
   const configured = CHAIN_CONFIGS[chainKey].chainId;
-  return event.chainId === 8453 || event.chainId === 10143 ? event.chainId : configured;
+  return event.chainId === 8453 || event.chainId === 10143
+    ? event.chainId
+    : configured;
 }
 
-export function withDefaultEventChain<T extends { chainKey?: string; chainId?: number }>(
-  value: T,
-): T & { chainKey: SupportedChainKey; chainId: SupportedChainId } {
+export function withDefaultEventChain<
+  T extends { chainKey?: string; chainId?: number },
+>(value: T): T & { chainKey: SupportedChainKey; chainId: SupportedChainId } {
   const chainKey = resolveEventChainKey(value);
   return {
     ...value,
@@ -41,10 +43,13 @@ export function withDefaultEventChain<T extends { chainKey?: string; chainId?: n
   };
 }
 
-export function withDefaultWalletChain<T extends { chainKey?: string; blockchain: string }>(
-  value: T,
-): T & { chainKey: SupportedChainKey } {
-  if (value.chainKey && normalizeSupportedChainKey(value.chainKey) === value.chainKey) {
+export function withDefaultWalletChain<
+  T extends { chainKey?: string; blockchain: string },
+>(value: T): T & { chainKey: SupportedChainKey } {
+  if (
+    value.chainKey &&
+    normalizeSupportedChainKey(value.chainKey) === value.chainKey
+  ) {
     return value as T & { chainKey: SupportedChainKey };
   }
 
@@ -62,11 +67,18 @@ export function withDefaultWalletChain<T extends { chainKey?: string; blockchain
   };
 }
 
-export function withDefaultTicketChain<T extends { chainKey?: string; chainId?: number }>(
+export function withDefaultTicketChain<
+  T extends { chainKey?: string; chainId?: number },
+>(
   value: T,
-  event?: Pick<Doc<"events">, "chainKey" | "chainId" | "contractAddress"> | null,
+  event?: Pick<
+    Doc<"events">,
+    "chainKey" | "chainId" | "contractAddress"
+  > | null,
 ): T & { chainKey: SupportedChainKey; chainId: SupportedChainId } {
-  const chainKey = normalizeSupportedChainKey(value.chainKey ?? event?.chainKey);
+  const chainKey = normalizeSupportedChainKey(
+    value.chainKey ?? event?.chainKey,
+  );
   const chainId =
     value.chainId === 8453 || value.chainId === 10143
       ? value.chainId

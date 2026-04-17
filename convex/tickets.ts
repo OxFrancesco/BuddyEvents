@@ -14,7 +14,11 @@ import {
   requireSignedInUser,
   requireSignedInUserOrService,
 } from "./lib/auth";
-import { chainIdValidator, chainKeyValidator, withDefaultTicketChain } from "./lib/chains";
+import {
+  chainIdValidator,
+  chainKeyValidator,
+  withDefaultTicketChain,
+} from "./lib/chains";
 import {
   listOwnedWalletAddresses,
   resolveUserByAnyWalletAddress,
@@ -79,7 +83,10 @@ type ScanResult = Infer<typeof scanResultValidator>;
 
 function normalizeTicketRecord(
   ticket: Doc<"tickets">,
-  event?: Pick<Doc<"events">, "chainKey" | "chainId" | "contractAddress"> | null,
+  event?: Pick<
+    Doc<"events">,
+    "chainKey" | "chainId" | "contractAddress"
+  > | null,
 ) {
   const normalized = withDefaultTicketChain(ticket, event);
   return {
@@ -182,13 +189,19 @@ export const listByBuyer = query({
       .withIndex("by_buyer", (q) => q.eq("buyerAddress", args.buyerAddress))
       .collect();
     const events = await Promise.all(
-      Array.from(new Set(tickets.map((ticket) => ticket.eventId))).map((id) => ctx.db.get(id)),
+      Array.from(new Set(tickets.map((ticket) => ticket.eventId))).map((id) =>
+        ctx.db.get(id),
+      ),
     );
     const eventsById = new Map(
-      events.filter((event): event is Doc<"events"> => event !== null).map((event) => [event._id, event]),
+      events
+        .filter((event): event is Doc<"events"> => event !== null)
+        .map((event) => [event._id, event]),
     );
 
-    return tickets.map((ticket) => normalizeTicketRecord(ticket, eventsById.get(ticket.eventId)));
+    return tickets.map((ticket) =>
+      normalizeTicketRecord(ticket, eventsById.get(ticket.eventId)),
+    );
   },
 });
 
@@ -214,7 +227,9 @@ export const listMine = query({
       (a, b) => b._creationTime - a._creationTime,
     );
     const events = await Promise.all(
-      Array.from(new Set(tickets.map((ticket) => ticket.eventId))).map((id) => ctx.db.get(id)),
+      Array.from(new Set(tickets.map((ticket) => ticket.eventId))).map((id) =>
+        ctx.db.get(id),
+      ),
     );
     const eventsById = new Map(
       events
@@ -338,17 +353,16 @@ async function recordPurchaseWithQrToken(
       .filter((token) => token.revokedAt === undefined && token.expiresAt > now)
       .sort((a, b) => b.issuedAt - a.issuedAt)[0];
 
-    const qr =
-      activeToken?.token
-        ? {
-            token: activeToken.token,
-            expiresAt: activeToken.expiresAt,
-          }
-        : await issueTicketQrToken(ctx, {
-            ticketId,
-            eventId: ticket.eventId,
-            buyerAddress: ticket.buyerAddress,
-          });
+    const qr = activeToken?.token
+      ? {
+          token: activeToken.token,
+          expiresAt: activeToken.expiresAt,
+        }
+      : await issueTicketQrToken(ctx, {
+          ticketId,
+          eventId: ticket.eventId,
+          buyerAddress: ticket.buyerAddress,
+        });
 
     await ctx.db.patch(ticketId, { qrCode: qr.token });
 
@@ -434,7 +448,11 @@ export const backfillChainMetadata = internalMutation({
     let updated = 0;
 
     for (const ticket of tickets) {
-      if (ticket.chainKey && ticket.chainId && ticket.contractAddress !== undefined) {
+      if (
+        ticket.chainKey &&
+        ticket.chainId &&
+        ticket.contractAddress !== undefined
+      ) {
         continue;
       }
       const event = await ctx.db.get(ticket.eventId);
@@ -462,7 +480,11 @@ export const backfillChainMetadataService = mutation({
     let updated = 0;
 
     for (const ticket of tickets) {
-      if (ticket.chainKey && ticket.chainId && ticket.contractAddress !== undefined) {
+      if (
+        ticket.chainKey &&
+        ticket.chainId &&
+        ticket.contractAddress !== undefined
+      ) {
         continue;
       }
 
@@ -534,13 +556,17 @@ export const scanForCheckIn = mutation({
     let isAuthorized = actor?.role === "admin";
 
     if (!isAuthorized) {
-      isAuthorized = organizerCandidates.has(event.creatorAddress.toLowerCase());
+      isAuthorized = organizerCandidates.has(
+        event.creatorAddress.toLowerCase(),
+      );
     }
 
     if (!isAuthorized && event.teamId) {
       const team = await ctx.db.get(event.teamId);
       if (team) {
-        isAuthorized = organizerCandidates.has(team.walletAddress.toLowerCase());
+        isAuthorized = organizerCandidates.has(
+          team.walletAddress.toLowerCase(),
+        );
         if (!isAuthorized) {
           isAuthorized = team.members.some((member) =>
             organizerCandidates.has(member.toLowerCase()),
@@ -585,8 +611,11 @@ export const scanForCheckIn = mutation({
     }
 
     const checkedInAt = Date.now();
-    const ownedAddresses = actor ? await listOwnedWalletAddresses(ctx, actor) : [];
-    const checkedInBy = ownedAddresses[0] ?? actor?._id ?? args.organizerAddress;
+    const ownedAddresses = actor
+      ? await listOwnedWalletAddresses(ctx, actor)
+      : [];
+    const checkedInBy =
+      ownedAddresses[0] ?? actor?._id ?? args.organizerAddress;
     await ctx.db.patch(ticket._id, {
       checkedInAt,
       checkedInBy,
